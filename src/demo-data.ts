@@ -1,52 +1,141 @@
 import type { CandidatePick } from "./types.js";
 
-/** Editable sample slate for UI demos and tests. */
+/** Editable Polymarket-style sample slate for UI demos and tests. */
 export const demoCandidates: CandidatePick[] = [
   {
     line: {
-      eventId: "ev-1",
-      market: "spread",
-      selection: "Eagles -3.5",
-      sportsbook: "DemoBook",
-      oddsFormat: "american",
-      odds: -110,
-      spread: -3.5
-    },
-    model: { coverProbability: 0.58, fairSpread: -5.0 }
-  },
-  {
-    line: {
-      eventId: "ev-2",
-      market: "spread",
-      selection: "Chiefs +2.5",
-      sportsbook: "DemoBook",
-      oddsFormat: "american",
-      odds: -108,
-      spread: 2.5
-    },
-    model: { coverProbability: 0.52, fairSpread: 3.0 }
-  },
-  {
-    line: {
-      eventId: "ev-3",
+      eventId: "pm-fed-cut-sep-2026-yes",
       market: "moneyline",
-      selection: "Rangers ML",
-      sportsbook: "DemoBook",
+      selection: "Fed cuts rates before Sep 2026 — Yes",
+      sportsbook: "Polymarket",
       oddsFormat: "decimal",
-      odds: 2.15
+      odds: 2.17,
+      polymarket: {
+        bestBid: 0.448,
+        bestAsk: 0.47,
+        bidAskSpread: 0.022,
+        liquidity: 980000
+      }
     },
-    model: { coverProbability: 0.48 }
+    model: { coverProbability: 0.54 }
   },
   {
     line: {
-      eventId: "ev-4",
-      market: "spread",
-      selection: "Lakers -7.0",
-      sportsbook: "DemoBook",
-      oddsFormat: "american",
-      odds: -105,
-      spread: -7.0
+      eventId: "pm-fed-cut-sep-2026-no",
+      market: "moneyline",
+      selection: "Fed cuts rates before Sep 2026 — No",
+      sportsbook: "Polymarket",
+      oddsFormat: "decimal",
+      odds: 1.86,
+      polymarket: {
+        bestBid: 0.53,
+        bestAsk: 0.552,
+        bidAskSpread: 0.022,
+        liquidity: 980000
+      }
     },
-    model: { coverProbability: 0.55, fairSpread: -8.5 }
+    model: { coverProbability: 0.46 }
+  },
+  {
+    line: {
+      eventId: "pm-recession-q4-2026-yes",
+      market: "moneyline",
+      selection: "US recession by Q4 2026 — Yes",
+      sportsbook: "Polymarket",
+      oddsFormat: "decimal",
+      odds: 2.78,
+      polymarket: {
+        bestBid: 0.345,
+        bestAsk: 0.376,
+        bidAskSpread: 0.031,
+        liquidity: 540000
+      }
+    },
+    model: { coverProbability: 0.44 }
+  },
+  {
+    line: {
+      eventId: "pm-recession-q4-2026-no",
+      market: "moneyline",
+      selection: "US recession by Q4 2026 — No",
+      sportsbook: "Polymarket",
+      oddsFormat: "decimal",
+      odds: 1.56,
+      polymarket: {
+        bestBid: 0.624,
+        bestAsk: 0.655,
+        bidAskSpread: 0.031,
+        liquidity: 540000
+      }
+    },
+    model: { coverProbability: 0.56 }
+  },
+  {
+    line: {
+      eventId: "pm-stablecoin-bill-2026-yes",
+      market: "moneyline",
+      selection: "US stablecoin bill enacted in 2026 — Yes",
+      sportsbook: "Polymarket",
+      oddsFormat: "decimal",
+      odds: 1.72,
+      polymarket: {
+        bestBid: 0.57,
+        bestAsk: 0.588,
+        bidAskSpread: 0.018,
+        liquidity: 1260000
+      }
+    },
+    model: { coverProbability: 0.63 }
+  },
+  {
+    line: {
+      eventId: "pm-stablecoin-bill-2026-no",
+      market: "moneyline",
+      selection: "US stablecoin bill enacted in 2026 — No",
+      sportsbook: "Polymarket",
+      oddsFormat: "decimal",
+      odds: 2.38,
+      polymarket: {
+        bestBid: 0.412,
+        bestAsk: 0.43,
+        bidAskSpread: 0.018,
+        liquidity: 1260000
+      }
+    },
+    model: { coverProbability: 0.37 }
+  },
+  {
+    line: {
+      eventId: "pm-sol-etf-2026-yes",
+      market: "moneyline",
+      selection: "Spot SOL ETF approved in 2026 — Yes",
+      sportsbook: "Polymarket",
+      oddsFormat: "decimal",
+      odds: 2.94,
+      polymarket: {
+        bestBid: 0.318,
+        bestAsk: 0.362,
+        bidAskSpread: 0.044,
+        liquidity: 310000
+      }
+    },
+    model: { coverProbability: 0.41 }
+  },
+  {
+    line: {
+      eventId: "pm-sol-etf-2026-no",
+      market: "moneyline",
+      selection: "Spot SOL ETF approved in 2026 — No",
+      sportsbook: "Polymarket",
+      oddsFormat: "decimal",
+      odds: 1.49,
+      polymarket: {
+        bestBid: 0.638,
+        bestAsk: 0.682,
+        bidAskSpread: 0.044,
+        liquidity: 310000
+      }
+    },
+    model: { coverProbability: 0.59 }
   }
 ];

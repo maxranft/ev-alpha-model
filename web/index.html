@@ -3,127 +3,257 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>EV Alpha — tune metrics</title>
+    <title>Polymarket Agent Dashboard</title>
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
-    <div class="app">
-      <header>
-        <h1>EV Alpha model</h1>
-        <p class="muted">
-          Maximize EV; Polymarket uses bid–ask “friction” instead of a sports spread. See
-          <code>docs/strategy.md</code>.
-        </p>
-        <p id="feedStatus" class="feed-status muted"></p>
+    <div class="app-shell">
+      <header class="hero panel">
+        <div class="hero-copy">
+          <p class="eyebrow">Polymarket Agent</p>
+          <h1>Tune conviction. Read microstructure. Route paper trades.</h1>
+          <p class="hero-text">
+            A front end for model tuning and Polymarket execution decisions. Adjust the
+            thresholds, inspect market quality, and manage a local trade blotter from one
+            operator console.
+          </p>
+        </div>
+        <div class="hero-side">
+          <div id="feedStatus" class="feed-status"></div>
+          <div id="summaryCards" class="hero-metrics"></div>
+        </div>
       </header>
 
-      <section class="panel">
-        <h2>Data source</h2>
-        <div class="source-row">
-          <label class="inline">
-            <input type="radio" name="source" id="sourceDemo" value="demo" checked />
-            Demo slate
-          </label>
-          <label class="inline">
-            <input type="radio" name="source" id="sourceLive" value="live" />
-            Live feed (poll)
-          </label>
-        </div>
-        <div id="liveControls" class="live-controls hidden">
-          <label>
-            Feed URL (JSON)
-            <input
-              type="url"
-              id="liveUrl"
-              placeholder="/live-sample.json or https://your-api/picks"
-              spellcheck="false"
-            />
-          </label>
-          <div class="live-actions">
-            <label>
-              Poll every (s)
-              <input type="number" id="pollInterval" min="5" max="600" step="5" value="30" />
-            </label>
-            <button type="button" id="refreshNow" class="btn">Refresh now</button>
-          </div>
-        </div>
-      </section>
+      <main class="layout">
+        <section class="column-main">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <p class="section-kicker">Control Deck</p>
+                <h2>Signal inputs and portfolio gates</h2>
+              </div>
+              <p class="muted">
+                All controls are local to the browser and persist between refreshes.
+              </p>
+            </div>
 
-      <section class="panel">
-        <h2>Rank filters</h2>
-        <div class="grid">
-          <label>
-            Min edge (model − implied)
-            <input type="range" id="minEdge" min="0" max="0.2" step="0.005" value="0" />
-            <span id="minEdgeVal" class="val">0.000</span>
-          </label>
-          <label>
-            Min EV per $1 staked
-            <input type="range" id="minEv" min="-0.1" max="0.2" step="0.005" value="0" />
-            <span id="minEvVal" class="val">0.000</span>
-          </label>
-          <label>
-            Kelly scale (fractional Kelly)
-            <input type="range" id="kellyScale" min="0" max="1" step="0.05" value="0.5" />
-            <span id="kellyScaleVal" class="val">0.50</span>
-          </label>
-          <label>
-            Sort by
-            <select id="sortMode">
-              <option value="ev">EV per $1 (default)</option>
-              <option value="alpha_per_friction">Alpha ÷ bid–ask friction</option>
-              <option value="capital_efficiency">Capital efficiency (EV vs Kelly)</option>
-            </select>
-          </label>
-        </div>
-      </section>
+            <div class="control-grid">
+              <article class="control-card">
+                <h3>Feed mode</h3>
+                <div class="segmented">
+                  <label class="segment">
+                    <input type="radio" name="source" id="sourceDemo" value="demo" checked />
+                    <span>Demo tape</span>
+                  </label>
+                  <label class="segment">
+                    <input type="radio" name="source" id="sourceLive" value="live" />
+                    <span>Live poll</span>
+                  </label>
+                </div>
+                <div id="liveControls" class="live-controls hidden">
+                  <label>
+                    Feed URL
+                    <input
+                      type="url"
+                      id="liveUrl"
+                      placeholder="/live-sample.json or https://your-api/feed"
+                      spellcheck="false"
+                    />
+                  </label>
+                  <div class="inline-grid">
+                    <label>
+                      Poll every (s)
+                      <input type="number" id="pollInterval" min="5" max="600" step="5" value="30" />
+                    </label>
+                    <button type="button" id="refreshNow" class="btn btn-secondary">Refresh</button>
+                  </div>
+                </div>
+              </article>
 
-      <section class="panel">
-        <h2>Bankroll</h2>
-        <div class="grid bankroll">
-          <label>
-            Sample bankroll ($)
-            <input type="number" id="bankroll" min="0" step="100" value="1000" />
-          </label>
-          <label>
-            Max stake per bet (% of bankroll)
-            <input type="range" id="maxStakePct" min="1" max="25" step="1" value="5" />
-            <span id="maxStakePctVal" class="val">5%</span>
-          </label>
-        </div>
-      </section>
+              <article class="control-card">
+                <h3>Model tuning</h3>
+                <div class="stack-grid">
+                  <label>
+                    Min edge
+                    <input type="range" id="minEdge" min="0" max="0.2" step="0.005" value="0.02" />
+                    <span id="minEdgeVal" class="val">0.020</span>
+                  </label>
+                  <label>
+                    Min EV per $1
+                    <input type="range" id="minEv" min="-0.05" max="0.2" step="0.005" value="0.01" />
+                    <span id="minEvVal" class="val">0.010</span>
+                  </label>
+                  <label>
+                    Kelly scale
+                    <input type="range" id="kellyScale" min="0" max="1" step="0.05" value="0.5" />
+                    <span id="kellyScaleVal" class="val">0.50</span>
+                  </label>
+                  <label>
+                    Sort by
+                    <select id="sortMode">
+                      <option value="ev">EV per dollar</option>
+                      <option value="alpha_per_friction">Alpha / friction</option>
+                      <option value="capital_efficiency">Capital efficiency</option>
+                    </select>
+                  </label>
+                </div>
+              </article>
 
-      <section class="panel">
-        <h2>Ranked picks</h2>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Event</th>
-                <th>Selection</th>
-                <th>Edge</th>
-                <th>EV/$1</th>
-                <th>Sports Δ</th>
-                <th>PM frict</th>
-                <th>α/frict</th>
-                <th>Cap eff</th>
-                <th>Kelly</th>
-                <th>Suggested stake</th>
-              </tr>
-            </thead>
-            <tbody id="rows"></tbody>
-          </table>
-        </div>
-        <p id="empty" class="muted hidden">No picks pass filters — loosen min edge or min EV.</p>
-      </section>
+              <article class="control-card">
+                <h3>Execution gates</h3>
+                <div class="stack-grid">
+                  <label>
+                    Bankroll ($)
+                    <input type="number" id="bankroll" min="0" step="100" value="10000" />
+                  </label>
+                  <label>
+                    Max stake per trade
+                    <input type="range" id="maxStakePct" min="1" max="25" step="1" value="6" />
+                    <span id="maxStakePctVal" class="val">6%</span>
+                  </label>
+                  <label>
+                    Max friction
+                    <input type="range" id="maxFriction" min="0" max="0.08" step="0.002" value="0.05" />
+                    <span id="maxFrictionVal" class="val">0.050</span>
+                  </label>
+                  <label>
+                    Min liquidity ($)
+                    <input type="number" id="minLiquidity" min="0" step="50000" value="200000" />
+                  </label>
+                  <label>
+                    Portfolio depth
+                    <input type="number" id="maxPositions" min="1" max="20" step="1" value="8" />
+                  </label>
+                  <label>
+                    Trader tag
+                    <input type="text" id="traderId" value="pm-desk" spellcheck="false" />
+                  </label>
+                </div>
+              </article>
+            </div>
+          </section>
 
-      <footer class="muted">
-        <p>
-          OpenClaw gateway: run Docker from the OpenClaw repo (see
-          <code>docs/openclaw-docker.md</code> in this project).
-        </p>
-      </footer>
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <p class="section-kicker">Market Radar</p>
+                <h2>What the tape looks like right now</h2>
+              </div>
+              <p id="boardCaption" class="muted"></p>
+            </div>
+            <div id="analysisBands" class="band-grid"></div>
+            <div class="analysis-grid">
+              <section class="subpanel">
+                <div class="subpanel-head">
+                  <h3>Signal ladder</h3>
+                  <p class="muted">Highest-conviction contracts after filters.</p>
+                </div>
+                <div id="marketPulse" class="stack-list"></div>
+              </section>
+              <section class="subpanel">
+                <div class="subpanel-head">
+                  <h3>Microstructure scan</h3>
+                  <p class="muted">Tight books, deep liquidity, and execution cost.</p>
+                </div>
+                <div id="marketQuality" class="stack-list"></div>
+              </section>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <p class="section-kicker">Opportunity Board</p>
+                <h2>Contracts ready for review</h2>
+              </div>
+              <p class="muted">Click a row to inspect the ticket and stage a trade.</p>
+            </div>
+            <div class="table-wrap">
+              <table class="opportunity-table">
+                <thead>
+                  <tr>
+                    <th>Rank</th>
+                    <th>Contract</th>
+                    <th>Market</th>
+                    <th>Model</th>
+                    <th>Edge</th>
+                    <th>EV/$</th>
+                    <th>Friction</th>
+                    <th>Liquidity</th>
+                    <th>Kelly</th>
+                    <th>Stake</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="rows"></tbody>
+              </table>
+            </div>
+            <p id="empty" class="empty-state hidden">
+              No contracts pass the current gates. Loosen the edge, EV, friction, or liquidity
+              thresholds.
+            </p>
+          </section>
+        </section>
+
+        <aside class="column-side">
+          <section class="panel detail-panel">
+            <div class="panel-head">
+              <div>
+                <p class="section-kicker">Trade Focus</p>
+                <h2>Selected contract</h2>
+              </div>
+              <p id="ticketContext" class="muted">Choose a contract from the board.</p>
+            </div>
+            <div id="selectedDetail" class="selected-detail"></div>
+            <div class="ticket-panel">
+              <div class="subpanel-head">
+                <h3>Execution ticket</h3>
+                <p class="muted">Local paper execution only.</p>
+              </div>
+              <div class="ticket-grid">
+                <label>
+                  Side
+                  <select id="ticketSide">
+                    <option value="BUY">Buy</option>
+                    <option value="SELL">Sell</option>
+                  </select>
+                </label>
+                <label>
+                  Stake ($)
+                  <input type="number" id="ticketStake" min="0" step="1" value="0" />
+                </label>
+                <label>
+                  Limit odds
+                  <input type="number" id="ticketOdds" min="1.01" step="0.01" value="1.5" />
+                </label>
+                <label class="ticket-note">
+                  Note
+                  <textarea id="ticketNote" rows="3" placeholder="Why this contract is actionable"></textarea>
+                </label>
+              </div>
+              <div class="ticket-actions">
+                <button type="button" id="stageTicket" class="btn btn-secondary">Stage ticket</button>
+                <button type="button" id="sendTicket" class="btn btn-primary">Paper execute</button>
+              </div>
+              <p id="actionStatus" class="muted action-status"></p>
+            </div>
+          </section>
+
+          <section class="panel blotter-panel">
+            <div class="panel-head">
+              <div>
+                <p class="section-kicker">Trade Blotter</p>
+                <h2>Desk activity</h2>
+              </div>
+              <button type="button" id="clearBlotter" class="btn btn-ghost">Clear closed</button>
+            </div>
+            <div id="blotterSummary" class="blotter-summary"></div>
+            <div id="blotterRows" class="blotter-rows"></div>
+          </section>
+        </aside>
+      </main>
     </div>
+
     <script type="module" src="/main.ts"></script>
   </body>
 </html>
