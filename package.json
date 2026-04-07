@@ -1,0 +1,21 @@
+{
+  "name": "ev-alpha-model",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "npm run check && vite build",
+    "check": "tsc --noEmit",
+    "dev": "vite",
+    "polymarket:feed": "tsx scripts/polymarket-feed.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.3",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.1",
+    "vitest": "^3.2.4"
+  }
+}

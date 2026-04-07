@@ -1,0 +1,33 @@
+{
+  "asOf": "2026-04-03T16:00:00.000Z",
+  "candidates": [
+    {
+      "line": {
+        "eventId": "live-1",
+        "market": "spread",
+        "selection": "Away +4.5",
+        "sportsbook": "BookA",
+        "oddsFormat": "american",
+        "odds": -110,
+        "spread": 4.5
+      },
+      "model": {
+        "coverProbability": 0.56,
+        "fairSpread": 6.0
+      }
+    },
+    {
+      "line": {
+        "eventId": "live-2",
+        "market": "moneyline",
+        "selection": "Home ML",
+        "sportsbook": "BookB",
+        "oddsFormat": "decimal",
+        "odds": 2.05
+      },
+      "model": {
+        "coverProbability": 0.5
+      }
+    }
+  ]
+}
