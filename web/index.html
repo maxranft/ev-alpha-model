@@ -8,17 +8,22 @@
   </head>
   <body>
     <div class="app-shell">
-      <header class="hero panel">
-        <div class="hero-copy">
-          <p class="eyebrow">Polymarket Agent</p>
-          <h1>Tune conviction. Read microstructure. Route paper trades.</h1>
-          <p class="hero-text">
-            A front end for model tuning and Polymarket execution decisions. Adjust the
-            thresholds, inspect market quality, and manage a local trade blotter from one
-            operator console.
-          </p>
+      <header class="masthead panel">
+        <div class="masthead-main">
+          <div class="brand-lockup">
+            <p class="eyebrow">Polymarket Alpha Desk</p>
+            <h1>P.M. Execution Console</h1>
+            <p class="hero-text">
+              Compact market scan, model tuning, ticket routing, and blotter review on one screen.
+            </p>
+          </div>
+          <div class="masthead-note">
+            <span class="note-label">Workflow</span>
+            <strong>Derived alpha -> contract review -> server-routed execution</strong>
+            <p>Built as a dense operator deck with contained panels and no layout spillover.</p>
+          </div>
         </div>
-        <div class="hero-side">
+        <div class="masthead-rail">
           <div id="feedStatus" class="feed-status"></div>
           <div id="summaryCards" class="hero-metrics"></div>
         </div>
@@ -26,14 +31,14 @@
 
       <main class="layout">
         <section class="column-main">
-          <section class="panel">
+          <section class="panel control-panel">
             <div class="panel-head">
               <div>
-                <p class="section-kicker">Control Deck</p>
-                <h2>Signal inputs and portfolio gates</h2>
+                <p class="section-kicker">Desk Controls</p>
+                <h2>Feed, model, and execution constraints</h2>
               </div>
               <p class="muted">
-                All controls are local to the browser and persist between refreshes.
+                Local settings for ranking, sizing, and route readiness.
               </p>
             </div>
 
@@ -140,11 +145,11 @@
             </div>
           </section>
 
-          <section class="panel">
+          <section class="panel radar-panel">
             <div class="panel-head">
               <div>
-                <p class="section-kicker">Market Radar</p>
-                <h2>What the tape looks like right now</h2>
+                <p class="section-kicker">Tape Scan</p>
+                <h2>Signal pressure and execution quality</h2>
               </div>
               <p id="boardCaption" class="muted"></p>
             </div>
@@ -152,28 +157,91 @@
             <div class="analysis-grid">
               <section class="subpanel">
                 <div class="subpanel-head">
-                  <h3>Signal ladder</h3>
-                  <p class="muted">Highest-conviction contracts after filters.</p>
+                  <h3>Priority ladder</h3>
+                  <p class="muted">Top conviction after active gates.</p>
                 </div>
                 <div id="marketPulse" class="stack-list"></div>
               </section>
               <section class="subpanel">
                 <div class="subpanel-head">
-                  <h3>Microstructure scan</h3>
-                  <p class="muted">Tight books, deep liquidity, and execution cost.</p>
+                  <h3>Market quality</h3>
+                  <p class="muted">Liquidity, spread, and executable depth.</p>
                 </div>
                 <div id="marketQuality" class="stack-list"></div>
               </section>
             </div>
           </section>
 
-          <section class="panel">
+          <section class="panel intelligence-panel">
             <div class="panel-head">
               <div>
-                <p class="section-kicker">Opportunity Board</p>
-                <h2>Contracts ready for review</h2>
+                <p class="section-kicker">Execution Intelligence</p>
+                <h2>Direct routing, 3D flow, and training simulation</h2>
               </div>
-              <p class="muted">Click a row to inspect the ticket and stage a trade.</p>
+              <p class="muted">Live path visibility and parameter search for trade cadence and sizing.</p>
+            </div>
+            <div class="intelligence-grid">
+              <section class="subpanel flow-panel">
+                <div class="subpanel-head">
+                  <div>
+                    <h3>3D data flow</h3>
+                    <p class="muted">Feed -> alpha -> risk -> ticket -> Polymarket -> blotter.</p>
+                  </div>
+                </div>
+                <canvas id="flowCanvas" class="flow-canvas" aria-label="3D execution flow graph"></canvas>
+                <div id="flowLegend" class="flow-legend"></div>
+              </section>
+
+              <section class="subpanel simulation-panel">
+                <div class="subpanel-head">
+                  <div>
+                    <h3>Agent training lab</h3>
+                    <p class="muted">Monte Carlo search for optimal trade frequency and volume scale.</p>
+                  </div>
+                </div>
+                <div class="simulation-controls">
+                  <label>
+                    Trials
+                    <input type="number" id="simTrials" min="50" max="5000" step="50" value="400" />
+                  </label>
+                  <label>
+                    Cycles
+                    <input type="number" id="simCycles" min="4" max="250" step="1" value="36" />
+                  </label>
+                  <label>
+                    Max trades / cycle
+                    <input type="number" id="simMaxFrequency" min="1" max="8" step="1" value="4" />
+                  </label>
+                  <label>
+                    Max volume scale
+                    <input type="number" id="simMaxVolume" min="0.5" max="3" step="0.1" value="1.8" />
+                  </label>
+                  <label>
+                    Objective
+                    <select id="simObjective">
+                      <option value="balanced">Balanced</option>
+                      <option value="growth">Growth</option>
+                      <option value="stability">Stability</option>
+                    </select>
+                  </label>
+                  <button type="button" id="runSimulation" class="btn btn-secondary">Run training</button>
+                </div>
+                <div id="simulationSummary" class="simulation-summary"></div>
+                <div id="simulationHeatmap" class="simulation-heatmap"></div>
+                <p id="simulationNarrative" class="muted simulation-narrative">
+                  Run the training lab to search the current board for better trade size and cadence.
+                </p>
+              </section>
+            </div>
+          </section>
+
+          <section class="panel board-panel">
+            <div class="panel-head">
+              <div>
+                <p class="section-kicker">Board</p>
+                <h2>Contracts ready for rapid review</h2>
+              </div>
+              <p class="muted">Select a row to load the execution ticket.</p>
             </div>
             <div class="table-wrap">
               <table class="opportunity-table">
@@ -206,8 +274,8 @@
           <section class="panel detail-panel">
             <div class="panel-head">
               <div>
-                <p class="section-kicker">Trade Focus</p>
-                <h2>Selected contract</h2>
+                <p class="section-kicker">Ticket</p>
+                <h2>Focused contract</h2>
               </div>
               <p id="ticketContext" class="muted">Choose a contract from the board.</p>
             </div>
@@ -215,8 +283,9 @@
             <div class="ticket-panel">
               <div class="subpanel-head">
                 <h3>Execution ticket</h3>
-                <p class="muted">Local paper execution only.</p>
+                <p class="muted">Draft locally or route through the server.</p>
               </div>
+              <div id="routeStatusPanel" class="route-status-panel"></div>
               <div class="ticket-grid">
                 <label>
                   Side
@@ -249,8 +318,8 @@
           <section class="panel blotter-panel">
             <div class="panel-head">
               <div>
-                <p class="section-kicker">Trade Blotter</p>
-                <h2>Desk activity</h2>
+                <p class="section-kicker">Blotter</p>
+                <h2>Execution and draft activity</h2>
               </div>
               <button type="button" id="syncOrders" class="btn btn-ghost">Sync orders</button>
             </div>

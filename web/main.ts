@@ -9,6 +9,12 @@ import {
   type ExecutionMode
 } from "@model/types/bet.js";
 import type { CandidatePick, ScoredPick } from "@model/types.js";
+import { mountFlowScene, type FlowSceneState } from "./flow-scene.js";
+import {
+  runTrainingSimulation,
+  type SimulationObjective,
+  type SimulationReport
+} from "./simulation.js";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -88,9 +94,27 @@ interface ViewModel {
   liveLabel?: string;
 }
 
+interface SimulationControls {
+  trials: number;
+  cycles: number;
+  maxFrequency: number;
+  maxVolume: number;
+  objective: SimulationObjective;
+}
+
+interface SimulationState {
+  controls: SimulationControls;
+  report: SimulationReport | null;
+  running: boolean;
+  error: string | null;
+  generatedAt?: string;
+  signature: string | null;
+}
+
 const STORAGE_PREFS = "pm_agent_dashboard_preferences_v3";
 const STORAGE_DRAFTS = "pm_agent_dashboard_drafts_v3";
 const STORAGE_SELECTED = "pm_agent_dashboard_selected_v3";
+const STORAGE_SIMULATION = "pm_agent_dashboard_simulation_v1";
 
 const DEFAULT_PREFERENCES: Preferences = {
   mode: "demo",
@@ -109,6 +133,14 @@ const DEFAULT_PREFERENCES: Preferences = {
   sortMode: "alpha_per_friction"
 };
 
+const DEFAULT_SIMULATION_CONTROLS: SimulationControls = {
+  trials: 400,
+  cycles: 36,
+  maxFrequency: 4,
+  maxVolume: 1.8,
+  objective: "balanced"
+};
+
 let currentCandidates: CandidatePick[] = [...demoCandidates];
 let liveError: string | null = null;
 let liveAsOf: string | undefined;
@@ -121,6 +153,23 @@ let actionMessage = "";
 let apiStatus: ApiStatusResponse | null = null;
 let apiError: string | null = null;
 let currentView: ViewModel | null = null;
+let simulationState: SimulationState = {
+  controls: loadSimulationControls(),
+  report: null,
+  running: false,
+  error: null,
+  signature: null
+};
+let flowSceneState: FlowSceneState = {
+  feedMode: "demo",
+  executionMode: "paper",
+  liveReady: false,
+  topEdge: 0,
+  plannedStake: 0,
+  openTrades: 0,
+  stagedTrades: 0,
+  simulationReady: false
+};
 
 const currency0 = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -253,6 +302,10 @@ function coerceSortMode(value: unknown): RankSortMode {
     : DEFAULT_PREFERENCES.sortMode;
 }
 
+function coerceSimulationObjective(value: unknown): SimulationObjective {
+  return value === "growth" || value === "stability" ? value : "balanced";
+}
+
 function normalizeTradeStatus(status: unknown): TradeStatus {
   if (status === "STAGED") {
     return "STAGED";
@@ -311,8 +364,49 @@ function loadPreferences(): Preferences {
   }
 }
 
+function loadSimulationControls(): SimulationControls {
+  try {
+    const raw = localStorage.getItem(STORAGE_SIMULATION);
+    if (!raw) {
+      return { ...DEFAULT_SIMULATION_CONTROLS };
+    }
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return {
+      trials: clamp(
+        Math.round(coerceNumber(parsed.trials, DEFAULT_SIMULATION_CONTROLS.trials)),
+        50,
+        5000
+      ),
+      cycles: clamp(
+        Math.round(coerceNumber(parsed.cycles, DEFAULT_SIMULATION_CONTROLS.cycles)),
+        4,
+        250
+      ),
+      maxFrequency: clamp(
+        Math.round(
+          coerceNumber(parsed.maxFrequency, DEFAULT_SIMULATION_CONTROLS.maxFrequency)
+        ),
+        1,
+        8
+      ),
+      maxVolume: clamp(
+        coerceNumber(parsed.maxVolume, DEFAULT_SIMULATION_CONTROLS.maxVolume),
+        0.5,
+        3
+      ),
+      objective: coerceSimulationObjective(parsed.objective)
+    };
+  } catch {
+    return { ...DEFAULT_SIMULATION_CONTROLS };
+  }
+}
+
 function persistPreferences(preferences: Preferences): void {
   localStorage.setItem(STORAGE_PREFS, JSON.stringify(preferences));
+}
+
+function persistSimulationControls(controls: SimulationControls): void {
+  localStorage.setItem(STORAGE_SIMULATION, JSON.stringify(controls));
 }
 
 function loadDraftTrades(): DashboardTrade[] {
@@ -355,6 +449,14 @@ function syncLiveUi(): void {
   $<HTMLInputElement>("sourceLive").checked = live;
 }
 
+function applySimulationControls(controls: SimulationControls): void {
+  $<HTMLInputElement>("simTrials").value = String(controls.trials);
+  $<HTMLInputElement>("simCycles").value = String(controls.cycles);
+  $<HTMLInputElement>("simMaxFrequency").value = String(controls.maxFrequency);
+  $<HTMLInputElement>("simMaxVolume").value = String(controls.maxVolume);
+  $<HTMLSelectElement>("simObjective").value = controls.objective;
+}
+
 function applyPreferences(preferences: Preferences): void {
   $<HTMLInputElement>("sourceDemo").checked = preferences.mode === "demo";
   $<HTMLInputElement>("sourceLive").checked = preferences.mode === "live";
@@ -390,6 +492,41 @@ function readPreferences(): Preferences {
     minLiquidity: Math.max(0, coerceNumber($<HTMLInputElement>("minLiquidity").value, DEFAULT_PREFERENCES.minLiquidity)),
     maxPositions: clamp(Math.round(coerceNumber($<HTMLInputElement>("maxPositions").value, DEFAULT_PREFERENCES.maxPositions)), 1, 20),
     sortMode: coerceSortMode($<HTMLSelectElement>("sortMode").value)
+  };
+}
+
+function readSimulationControls(): SimulationControls {
+  return {
+    trials: clamp(
+      Math.round(
+        coerceNumber($<HTMLInputElement>("simTrials").value, DEFAULT_SIMULATION_CONTROLS.trials)
+      ),
+      50,
+      5000
+    ),
+    cycles: clamp(
+      Math.round(
+        coerceNumber($<HTMLInputElement>("simCycles").value, DEFAULT_SIMULATION_CONTROLS.cycles)
+      ),
+      4,
+      250
+    ),
+    maxFrequency: clamp(
+      Math.round(
+        coerceNumber(
+          $<HTMLInputElement>("simMaxFrequency").value,
+          DEFAULT_SIMULATION_CONTROLS.maxFrequency
+        )
+      ),
+      1,
+      8
+    ),
+    maxVolume: clamp(
+      coerceNumber($<HTMLInputElement>("simMaxVolume").value, DEFAULT_SIMULATION_CONTROLS.maxVolume),
+      0.5,
+      3
+    ),
+    objective: coerceSimulationObjective($<HTMLSelectElement>("simObjective").value)
   };
 }
 
@@ -465,6 +602,43 @@ function buildViewModel(preferences: Preferences): ViewModel {
     plannedStake,
     liveLabel
   };
+}
+
+function simulationSourcePicks(view: ViewModel): ScoredPick[] {
+  return (view.filtered.length > 0 ? view.filtered : view.allScored).slice(0, 12);
+}
+
+function simulationSignature(view: ViewModel): string {
+  return JSON.stringify({
+    bankroll: Math.round(view.preferences.bankroll),
+    maxStakePct: view.preferences.maxStakePct,
+    executionMode: view.preferences.executionMode,
+    picks: simulationSourcePicks(view).map((pick) => ({
+      key: getPickKey(pick),
+      edge: Number(pick.edge.toFixed(4)),
+      model: Number(pick.model.coverProbability.toFixed(4)),
+      implied: Number(pick.impliedProbability.toFixed(4))
+    }))
+  });
+}
+
+function buildVolumeScales(maxVolume: number): number[] {
+  const steps = 6;
+  const minVolume = 0.4;
+  const clampedMax = clamp(maxVolume, minVolume, 3);
+  const values = Array.from({ length: steps }, (_, index) => {
+    if (steps === 1) {
+      return clampedMax;
+    }
+    const ratio = index / (steps - 1);
+    return Number((minVolume + (clampedMax - minVolume) * ratio).toFixed(2));
+  });
+  return [...new Set(values)];
+}
+
+function buildFrequencies(maxFrequency: number, available: number): number[] {
+  const ceiling = clamp(maxFrequency, 1, Math.max(1, Math.min(8, available)));
+  return Array.from({ length: ceiling }, (_, index) => index + 1);
 }
 
 function ensureTicketSeed(view: ViewModel): void {
@@ -739,7 +913,7 @@ async function submitTrade(pick: ScoredPick, draft: TicketDraft): Promise<void> 
     removeDraftsForPick(getPickKey(pick));
     actionMessage =
       preferences.executionMode === "live"
-        ? `Live order routed for ${pick.line.selection}.`
+        ? `Direct Polymarket order routed for ${pick.line.selection}.`
         : `Paper order stored for ${pick.line.selection}.`;
     await refreshServerOrders(true);
   } catch (error) {
@@ -783,6 +957,253 @@ function selectPickByKey(pickKey: string): void {
   render();
 }
 
+function updateFlowSceneState(view: ViewModel): void {
+  flowSceneState = {
+    feedMode: view.preferences.mode,
+    executionMode: view.preferences.executionMode,
+    liveReady: apiStatus?.liveTradingEnabled ?? false,
+    selectedLabel: view.selected?.line.selection,
+    topEdge: view.displayed[0]?.edge ?? 0,
+    plannedStake: view.plannedStake,
+    openTrades: view.openTrades.length,
+    stagedTrades: view.stagedTrades.length,
+    simulationReady:
+      Boolean(simulationState.report) && simulationState.signature === simulationSignature(view)
+  };
+}
+
+function renderFlowLegend(view: ViewModel): void {
+  const selected = view.selected;
+  const routeReady =
+    view.preferences.executionMode === "live" &&
+    Boolean(selected?.line.polymarket?.contract?.tokenId) &&
+    (apiStatus?.liveTradingEnabled ?? false);
+  $<HTMLElement>("flowLegend").innerHTML = `
+    <div class="flow-chip">
+      <span>Selected</span>
+      <strong>${escapeHtml(selected?.line.selection ?? "No contract selected")}</strong>
+    </div>
+    <div class="flow-chip">
+      <span>Feed path</span>
+      <strong>${view.preferences.mode === "live" ? "Live Gamma feed" : "Local demo slate"}</strong>
+    </div>
+    <div class="flow-chip">
+      <span>Route</span>
+      <strong>${routeReady ? "Direct Polymarket live path armed" : "Paper path or live route blocked"}</strong>
+    </div>
+    <div class="flow-chip">
+      <span>Training</span>
+      <strong>${simulationState.report ? `Simulation ${relativeTime(simulationState.generatedAt) ?? "ready"}` : "Run training lab"}</strong>
+    </div>
+  `;
+}
+
+function renderRouteStatus(view: ViewModel): void {
+  const selected = view.selected;
+  const contract = selected?.line.polymarket?.contract;
+  const liveReady = apiStatus?.liveTradingEnabled ?? false;
+  const liveReason = apiStatus?.liveTradingReason ?? apiError ?? "Live route available.";
+  const directRouteReady =
+    view.preferences.executionMode === "live" && Boolean(contract?.tokenId) && liveReady;
+
+  $<HTMLElement>("routeStatusPanel").innerHTML = `
+    <div class="route-chip">
+      <span>Route mode</span>
+      <strong>${view.preferences.executionMode === "live" ? "Direct Polymarket" : "Paper execution"}</strong>
+    </div>
+    <div class="route-chip">
+      <span>Server</span>
+      <strong>${liveReady ? "Live armed" : "Live blocked"}</strong>
+    </div>
+    <div class="route-chip">
+      <span>Contract token</span>
+      <strong>${contract?.tokenId ? escapeHtml(contract.tokenId) : "Missing token metadata"}</strong>
+    </div>
+    <div class="route-chip">
+      <span>Status</span>
+      <strong>${directRouteReady ? "Ready to place direct on Polymarket" : escapeHtml(liveReason)}</strong>
+    </div>
+  `;
+}
+
+function renderSimulationLab(view: ViewModel): void {
+  const summary = $<HTMLElement>("simulationSummary");
+  const heatmap = $<HTMLElement>("simulationHeatmap");
+  const narrative = $<HTMLElement>("simulationNarrative");
+  const source = simulationSourcePicks(view);
+  const signature = simulationSignature(view);
+  const stale = Boolean(simulationState.report) && simulationState.signature !== signature;
+
+  if (simulationState.running) {
+    summary.innerHTML = `
+      <div class="summary-chip">
+        <span>Status</span>
+        <strong>Running</strong>
+      </div>
+    `;
+    heatmap.innerHTML = "";
+    narrative.textContent = "Training lab is evaluating frequency and volume combinations.";
+    return;
+  }
+
+  if (source.length === 0) {
+    summary.innerHTML = "";
+    heatmap.innerHTML = "";
+    narrative.textContent = "No ranked contracts are available for simulation yet.";
+    return;
+  }
+
+  if (!simulationState.report || stale) {
+    summary.innerHTML = "";
+    heatmap.innerHTML = "";
+    narrative.textContent = stale
+      ? "The board changed after the last run. Run training again to refresh the optimal cadence."
+      : "Run the training lab to search the current board for better trade size and cadence.";
+    return;
+  }
+
+  if (simulationState.error) {
+    summary.innerHTML = "";
+    heatmap.innerHTML = "";
+    narrative.textContent = simulationState.error;
+    return;
+  }
+
+  const { best, baseline, cells } = simulationState.report;
+  const bestCell = best;
+  const baselineCell = baseline;
+
+  summary.innerHTML = bestCell
+    ? `
+      <div class="summary-chip">
+        <span>Best frequency</span>
+        <strong>${bestCell.frequency}/cycle</strong>
+      </div>
+      <div class="summary-chip">
+        <span>Best volume</span>
+        <strong>${fmt(bestCell.volumeScale, 2)}x</strong>
+      </div>
+      <div class="summary-chip">
+        <span>Avg return</span>
+        <strong class="${signedClass(bestCell.averageReturnPct)}">${fmt(bestCell.averageReturnPct, 2)}%</strong>
+      </div>
+      <div class="summary-chip">
+        <span>Drawdown</span>
+        <strong>${fmt(bestCell.averageMaxDrawdownPct, 2)}%</strong>
+      </div>
+      <div class="summary-chip">
+        <span>Win rate</span>
+        <strong>${fmtPct(bestCell.winRate, 1)}</strong>
+      </div>
+    `
+    : "";
+
+  const frequencies = [...new Set(cells.map((cell) => cell.frequency))].sort((left, right) => left - right);
+  const volumes = [...new Set(cells.map((cell) => cell.volumeScale))].sort((left, right) => right - left);
+  const scores = cells.map((cell) => cell.score);
+  const minScore = Math.min(...scores);
+  const maxScore = Math.max(...scores);
+
+  heatmap.style.gridTemplateColumns = `repeat(${frequencies.length + 1}, minmax(0, 1fr))`;
+  heatmap.innerHTML = [
+    `<div class="heatmap-head">Vol \\ Freq</div>`,
+    ...frequencies.map((frequency) => `<div class="heatmap-head">${frequency}</div>`),
+    ...volumes.flatMap((volume) => {
+      const row: string[] = [`<div class="heatmap-side">${fmt(volume, 2)}x</div>`];
+      for (const frequency of frequencies) {
+        const cell = cells.find(
+          (entry) => entry.frequency === frequency && Math.abs(entry.volumeScale - volume) < 0.001
+        );
+        if (!cell) {
+          row.push(`<div class="heatmap-cell"></div>`);
+          continue;
+        }
+        const normalized =
+          maxScore > minScore ? (cell.score - minScore) / (maxScore - minScore) : 0.5;
+        const hue = 8 + normalized * 116;
+        row.push(`
+          <div
+            class="heatmap-cell"
+            style="background: hsla(${hue}, 85%, 52%, ${0.12 + normalized * 0.3});"
+          >
+            <strong>${fmt(cell.averageReturnPct, 1)}%</strong>
+            <small>DD ${fmt(cell.averageMaxDrawdownPct, 1)}%</small>
+          </div>
+        `);
+      }
+      return row;
+    })
+  ].join("");
+
+  if (!bestCell) {
+    narrative.textContent = "Training completed, but no viable combination beat the baseline.";
+    return;
+  }
+
+  const baselineDelta =
+    baselineCell && Number.isFinite(baselineCell.averageReturnPct)
+      ? bestCell.averageReturnPct - baselineCell.averageReturnPct
+      : undefined;
+  narrative.textContent =
+    `Training recommends ${bestCell.frequency} trades per cycle at ${fmt(bestCell.volumeScale, 2)}x size` +
+    ` with ${fmt(bestCell.averageReturnPct, 2)}% average return and ${fmt(bestCell.averageMaxDrawdownPct, 2)}% drawdown.` +
+    (baselineDelta !== undefined
+      ? ` That is ${fmt(baselineDelta, 2)} pts versus the 1x / 1-trade baseline.`
+      : "");
+}
+
+async function runSimulationLab(): Promise<void> {
+  if (!currentView) {
+    return;
+  }
+  const controls = readSimulationControls();
+  persistSimulationControls(controls);
+  simulationState = {
+    ...simulationState,
+    controls,
+    running: true,
+    error: null
+  };
+  render();
+
+  await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+  try {
+    const view = currentView;
+    if (!view) {
+      return;
+    }
+    const picks = simulationSourcePicks(view);
+    const report = runTrainingSimulation(picks, {
+      bankroll: Math.max(100, view.preferences.bankroll),
+      maxStakePct: view.preferences.maxStakePct,
+      trials: controls.trials,
+      cycles: controls.cycles,
+      objective: controls.objective,
+      frequencies: buildFrequencies(controls.maxFrequency, picks.length),
+      volumeScales: buildVolumeScales(controls.maxVolume)
+    });
+    simulationState = {
+      ...simulationState,
+      controls,
+      report,
+      running: false,
+      error: null,
+      generatedAt: new Date().toISOString(),
+      signature: simulationSignature(view)
+    };
+  } catch (error) {
+    simulationState = {
+      ...simulationState,
+      controls,
+      running: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+
+  render();
+}
+
 function renderFeedStatus(view: ViewModel): void {
   const el = $<HTMLElement>("feedStatus");
   const mode = view.preferences.mode;
@@ -804,12 +1225,6 @@ function renderFeedStatus(view: ViewModel): void {
 
 function renderSummaryCards(view: ViewModel): void {
   const top = view.displayed[0];
-  const avgEdge = mean(view.filtered.map((pick) => pick.edge)) ?? 0;
-  const avgFriction = mean(
-    view.filtered
-      .map((pick) => pick.line.polymarket?.bidAskSpread)
-      .filter((value): value is number => value !== undefined)
-  );
   const deployed = view.openTrades.reduce((sum, trade) => sum + trade.stake, 0);
   const liveReady = apiStatus?.liveTradingEnabled ?? false;
   const execLabel =
@@ -842,7 +1257,7 @@ function renderSummaryCards(view: ViewModel): void {
     <article class="hero-card">
       <span>Execution</span>
       <strong>${escapeHtml(execLabel)}</strong>
-      <small>${escapeHtml(execDetail || `Avg edge ${fmtPct(avgEdge)} · avg friction ${avgFriction !== undefined ? fmt(avgFriction, 3) : "—"}`)}</small>
+      <small>${escapeHtml(execDetail)}</small>
     </article>
   `;
 }
@@ -988,7 +1403,7 @@ function renderOpportunityBoard(view: ViewModel): void {
     return;
   }
   empty.classList.add("hidden");
-  const routeLabel = view.preferences.executionMode === "live" ? "Live" : "Paper";
+  const routeLabel = view.preferences.executionMode === "live" ? "Direct" : "Paper";
   tbody.innerHTML = view.displayed
     .map((pick, index) => {
       const pickKey = getPickKey(pick);
@@ -1193,7 +1608,7 @@ function renderActionStatus(view: ViewModel): void {
   const sendButton = $<HTMLButtonElement>("sendTicket");
   const wantsLive = view.preferences.executionMode === "live";
   const canRouteLive = Boolean(selected?.line.polymarket?.contract?.tokenId) && (apiStatus?.liveTradingEnabled ?? false);
-  sendButton.textContent = wantsLive ? "Send live order" : "Send paper order";
+  sendButton.textContent = wantsLive ? "Place direct on Polymarket" : "Store paper order";
   sendButton.disabled = wantsLive && !canRouteLive;
 
   if (wantsLive && !(apiStatus?.liveTradingEnabled ?? false)) {
@@ -1218,6 +1633,7 @@ function render(): void {
 
   currentView = buildViewModel(preferences);
   ensureTicketSeed(currentView);
+  updateFlowSceneState(currentView);
 
   renderFeedStatus(currentView);
   renderSummaryCards(currentView);
@@ -1225,8 +1641,11 @@ function render(): void {
   renderAnalysisBands(currentView);
   renderMarketPulse(currentView);
   renderMarketQuality(currentView);
+  renderFlowLegend(currentView);
+  renderSimulationLab(currentView);
   renderOpportunityBoard(currentView);
   renderSelectedDetail(currentView);
+  renderRouteStatus(currentView);
   renderBlotter(currentView);
   renderActionStatus(currentView);
 }
@@ -1356,6 +1775,16 @@ for (const id of [
   });
 }
 
+for (const id of ["simTrials", "simCycles", "simMaxFrequency", "simMaxVolume", "simObjective"] as const) {
+  $(id).addEventListener("change", () => {
+    simulationState = {
+      ...simulationState,
+      controls: readSimulationControls()
+    };
+    persistSimulationControls(simulationState.controls);
+  });
+}
+
 $<HTMLInputElement>("traderId").addEventListener("change", () => {
   actionMessage = "";
   void syncBackend(false);
@@ -1385,6 +1814,9 @@ $<HTMLButtonElement>("sendTicket").addEventListener("click", () => {
 });
 $<HTMLButtonElement>("syncOrders").addEventListener("click", () => {
   void syncBackend(true);
+});
+$<HTMLButtonElement>("runSimulation").addEventListener("click", () => {
+  void runSimulationLab();
 });
 
 $<HTMLTableSectionElement>("rows").addEventListener("click", (event) => {
@@ -1416,6 +1848,9 @@ $<HTMLElement>("blotterRows").addEventListener("click", (event) => {
 });
 
 applyPreferences(loadPreferences());
+applySimulationControls(simulationState.controls);
+
+const disposeFlowScene = mountFlowScene($<HTMLCanvasElement>("flowCanvas"), () => flowSceneState);
 
 void syncBackend(false);
 
@@ -1425,6 +1860,9 @@ if (getMode() === "live") {
   currentCandidates = [...demoCandidates];
 }
 
-window.addEventListener("beforeunload", stopPoll);
+window.addEventListener("beforeunload", () => {
+  stopPoll();
+  disposeFlowScene();
+});
 
 render();
