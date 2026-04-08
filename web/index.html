@@ -128,6 +128,13 @@
                     Trader tag
                     <input type="text" id="traderId" value="pm-desk" spellcheck="false" />
                   </label>
+                  <label>
+                    Routing mode
+                    <select id="executionMode">
+                      <option value="paper">Paper execution</option>
+                      <option value="live">Live execution</option>
+                    </select>
+                  </label>
                 </div>
               </article>
             </div>
@@ -233,7 +240,7 @@
               </div>
               <div class="ticket-actions">
                 <button type="button" id="stageTicket" class="btn btn-secondary">Stage ticket</button>
-                <button type="button" id="sendTicket" class="btn btn-primary">Paper execute</button>
+                <button type="button" id="sendTicket" class="btn btn-primary">Route order</button>
               </div>
               <p id="actionStatus" class="muted action-status"></p>
             </div>
@@ -245,7 +252,7 @@
                 <p class="section-kicker">Trade Blotter</p>
                 <h2>Desk activity</h2>
               </div>
-              <button type="button" id="clearBlotter" class="btn btn-ghost">Clear closed</button>
+              <button type="button" id="syncOrders" class="btn btn-ghost">Sync orders</button>
             </div>
             <div id="blotterSummary" class="blotter-summary"></div>
             <div id="blotterRows" class="blotter-rows"></div>

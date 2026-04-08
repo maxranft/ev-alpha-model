@@ -423,6 +423,14 @@ input[type="range"] {
   transform: translateY(-1px);
 }
 
+.btn:disabled,
+.table-btn:disabled,
+.mini-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  transform: none;
+}
+
 .btn-primary {
   background: var(--accent);
   color: #fff6ef;
@@ -639,7 +647,17 @@ input[type="range"] {
   color: var(--warning);
 }
 
+.status-pill.pending {
+  background: rgba(199, 121, 26, 0.12);
+  color: var(--warning);
+}
+
 .status-pill.placed {
+  background: rgba(31, 127, 120, 0.12);
+  color: var(--teal);
+}
+
+.status-pill.filling {
   background: rgba(31, 127, 120, 0.12);
   color: var(--teal);
 }

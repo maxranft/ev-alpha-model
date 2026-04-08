@@ -2,20 +2,25 @@ import { demoCandidates } from "@model/demo-data.js";
 import { fetchLiveFeed } from "@model/live-feed.js";
 import { rankPicks, scorePick } from "@model/rank.js";
 import type { RankOptions, RankSortMode } from "@model/rank.js";
-import { POLYMARKET_PLATFORM } from "@model/types/bet.js";
-import type { BetSide } from "@model/types/bet.js";
+import {
+  BetStatus,
+  POLYMARKET_PLATFORM,
+  type BetSide,
+  type ExecutionMode
+} from "@model/types/bet.js";
 import type { CandidatePick, ScoredPick } from "@model/types.js";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
 type DataMode = "demo" | "live";
-type TradeStatus = "STAGED" | "PLACED" | "FILLED" | "CANCELLED";
+type TradeStatus = "STAGED" | `${BetStatus}`;
 
 interface Preferences {
   mode: DataMode;
   liveUrl: string;
   pollInterval: number;
   traderId: string;
+  executionMode: ExecutionMode;
   minEdge: number;
   minEv: number;
   kellyScale: number;
@@ -36,6 +41,7 @@ interface TicketDraft {
 
 interface DashboardTrade {
   id: string;
+  source: "local" | "server";
   traderId: string;
   pickKey: string;
   eventId: string;
@@ -51,9 +57,20 @@ interface DashboardTrade {
   friction?: number;
   liquidity?: number;
   sourceMode: DataMode;
+  executionMode?: ExecutionMode;
   createdAt: string;
   updatedAt: string;
   note: string;
+  platformOrderId?: string;
+  error?: string;
+}
+
+interface ApiStatusResponse {
+  ok: boolean;
+  executionMode: ExecutionMode;
+  liveTradingEnabled: boolean;
+  liveTradingReason?: string;
+  feedUrl?: string;
 }
 
 interface ViewModel {
@@ -63,20 +80,24 @@ interface ViewModel {
   displayed: ScoredPick[];
   hiddenCount: number;
   selected: ScoredPick | null;
+  stagedTrades: DashboardTrade[];
+  serverTrades: DashboardTrade[];
+  combinedTrades: DashboardTrade[];
   openTrades: DashboardTrade[];
   plannedStake: number;
   liveLabel?: string;
 }
 
-const STORAGE_PREFS = "pm_agent_dashboard_preferences_v2";
-const STORAGE_BLOTTER = "pm_agent_dashboard_blotter_v2";
-const STORAGE_SELECTED = "pm_agent_dashboard_selected_v2";
+const STORAGE_PREFS = "pm_agent_dashboard_preferences_v3";
+const STORAGE_DRAFTS = "pm_agent_dashboard_drafts_v3";
+const STORAGE_SELECTED = "pm_agent_dashboard_selected_v3";
 
 const DEFAULT_PREFERENCES: Preferences = {
   mode: "demo",
-  liveUrl: "",
+  liveUrl: "/feed",
   pollInterval: 30,
   traderId: "pm-desk",
+  executionMode: "paper",
   minEdge: 0.02,
   minEv: 0.01,
   kellyScale: 0.5,
@@ -92,10 +113,13 @@ let currentCandidates: CandidatePick[] = [...demoCandidates];
 let liveError: string | null = null;
 let liveAsOf: string | undefined;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
-let blotter: DashboardTrade[] = loadBlotter();
+let draftTrades: DashboardTrade[] = loadDraftTrades();
+let serverTrades: DashboardTrade[] = [];
 let selectedPickKey: string | null = loadSelectedPickKey();
 let ticketSeedKey: string | null = null;
 let actionMessage = "";
+let apiStatus: ApiStatusResponse | null = null;
+let apiError: string | null = null;
 let currentView: ViewModel | null = null;
 
 const currency0 = new Intl.NumberFormat("en-US", {
@@ -210,14 +234,50 @@ function coerceNumber(value: unknown, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function optionalNumber(value: unknown): number | undefined {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 function coerceMode(value: unknown): DataMode {
   return value === "live" ? "live" : "demo";
+}
+
+function coerceExecutionMode(value: unknown): ExecutionMode {
+  return value === "live" ? "live" : "paper";
 }
 
 function coerceSortMode(value: unknown): RankSortMode {
   return value === "capital_efficiency" || value === "ev" || value === "alpha_per_friction"
     ? value
     : DEFAULT_PREFERENCES.sortMode;
+}
+
+function normalizeTradeStatus(status: unknown): TradeStatus {
+  if (status === "STAGED") {
+    return "STAGED";
+  }
+  if (
+    status === BetStatus.PENDING ||
+    status === BetStatus.PLACED ||
+    status === BetStatus.FILLING ||
+    status === BetStatus.FILLED ||
+    status === BetStatus.CANCELLED ||
+    status === BetStatus.SETTLED ||
+    status === BetStatus.EXPIRED
+  ) {
+    return status;
+  }
+  return BetStatus.PLACED;
+}
+
+function isOpenStatus(status: TradeStatus): boolean {
+  return (
+    status === "STAGED" ||
+    status === BetStatus.PENDING ||
+    status === BetStatus.PLACED ||
+    status === BetStatus.FILLING
+  );
 }
 
 function loadPreferences(): Preferences {
@@ -235,6 +295,7 @@ function loadPreferences(): Preferences {
         typeof parsed.traderId === "string" && parsed.traderId.trim()
           ? parsed.traderId.trim()
           : DEFAULT_PREFERENCES.traderId,
+      executionMode: coerceExecutionMode(parsed.executionMode),
       minEdge: clamp(coerceNumber(parsed.minEdge, DEFAULT_PREFERENCES.minEdge), 0, 0.2),
       minEv: clamp(coerceNumber(parsed.minEv, DEFAULT_PREFERENCES.minEv), -0.05, 0.2),
       kellyScale: clamp(coerceNumber(parsed.kellyScale, DEFAULT_PREFERENCES.kellyScale), 0, 1),
@@ -254,21 +315,21 @@ function persistPreferences(preferences: Preferences): void {
   localStorage.setItem(STORAGE_PREFS, JSON.stringify(preferences));
 }
 
-function loadBlotter(): DashboardTrade[] {
+function loadDraftTrades(): DashboardTrade[] {
   try {
-    const raw = localStorage.getItem(STORAGE_BLOTTER);
+    const raw = localStorage.getItem(STORAGE_DRAFTS);
     if (!raw) {
       return [];
     }
     const parsed = JSON.parse(raw) as DashboardTrade[];
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed) ? parsed.map((trade) => ({ ...trade, status: "STAGED", source: "local" })) : [];
   } catch {
     return [];
   }
 }
 
-function persistBlotter(): void {
-  localStorage.setItem(STORAGE_BLOTTER, JSON.stringify(blotter));
+function persistDraftTrades(): void {
+  localStorage.setItem(STORAGE_DRAFTS, JSON.stringify(draftTrades));
 }
 
 function loadSelectedPickKey(): string | null {
@@ -284,7 +345,7 @@ function persistSelectedPickKey(): void {
 }
 
 function getMode(): DataMode {
-  return ($<HTMLInputElement>("sourceLive")).checked ? "live" : "demo";
+  return $<HTMLInputElement>("sourceLive").checked ? "live" : "demo";
 }
 
 function syncLiveUi(): void {
@@ -300,6 +361,7 @@ function applyPreferences(preferences: Preferences): void {
   $<HTMLInputElement>("liveUrl").value = preferences.liveUrl;
   $<HTMLInputElement>("pollInterval").value = String(preferences.pollInterval);
   $<HTMLInputElement>("traderId").value = preferences.traderId;
+  $<HTMLSelectElement>("executionMode").value = preferences.executionMode;
   $<HTMLInputElement>("minEdge").value = String(preferences.minEdge);
   $<HTMLInputElement>("minEv").value = String(preferences.minEv);
   $<HTMLInputElement>("kellyScale").value = String(preferences.kellyScale);
@@ -318,6 +380,7 @@ function readPreferences(): Preferences {
     liveUrl: $<HTMLInputElement>("liveUrl").value.trim(),
     pollInterval: clamp(coerceNumber($<HTMLInputElement>("pollInterval").value, DEFAULT_PREFERENCES.pollInterval), 5, 600),
     traderId: $<HTMLInputElement>("traderId").value.trim() || DEFAULT_PREFERENCES.traderId,
+    executionMode: coerceExecutionMode($<HTMLSelectElement>("executionMode").value),
     minEdge: clamp(coerceNumber($<HTMLInputElement>("minEdge").value, DEFAULT_PREFERENCES.minEdge), 0, 0.2),
     minEv: clamp(coerceNumber($<HTMLInputElement>("minEv").value, DEFAULT_PREFERENCES.minEv), -0.05, 0.2),
     kellyScale: clamp(coerceNumber($<HTMLInputElement>("kellyScale").value, DEFAULT_PREFERENCES.kellyScale), 0, 1),
@@ -378,9 +441,10 @@ function buildViewModel(preferences: Preferences): ViewModel {
   }
 
   const selected = displayed.find((pick) => getPickKey(pick) === selectedPickKey) ?? null;
-  const openTrades = blotter.filter(
-    (trade) => trade.status === "STAGED" || trade.status === "PLACED"
+  const combinedTrades = [...draftTrades, ...serverTrades].sort(
+    (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
   );
+  const openTrades = combinedTrades.filter((trade) => isOpenStatus(trade.status));
   const plannedStake = displayed.reduce(
     (sum, pick) => sum + suggestedStake(pick, preferences),
     0
@@ -394,6 +458,9 @@ function buildViewModel(preferences: Preferences): ViewModel {
     displayed,
     hiddenCount,
     selected,
+    stagedTrades: draftTrades,
+    serverTrades,
+    combinedTrades,
     openTrades,
     plannedStake,
     liveLabel
@@ -440,59 +507,146 @@ function readTicketDraft(): TicketDraft | null {
   return { side, stake, odds, note };
 }
 
-function queueTrade(pick: ScoredPick, status: TradeStatus, draft: TicketDraft): void {
+function toDraftTrade(pick: ScoredPick, preferences: Preferences, draft: TicketDraft): DashboardTrade {
   const timestamp = new Date().toISOString();
-  blotter = [
-    {
-      id: crypto.randomUUID(),
-      traderId: readPreferences().traderId,
-      pickKey: getPickKey(pick),
-      eventId: pick.line.eventId,
-      selection: pick.line.selection,
-      side: draft.side,
-      platform: POLYMARKET_PLATFORM,
-      status,
-      stake: draft.stake,
-      priceLimit: draft.odds,
-      edge: pick.edge,
-      expectedValuePerDollar: pick.expectedValuePerDollar,
-      kellyFraction: pick.kellyFraction,
-      friction: pick.line.polymarket?.bidAskSpread,
-      liquidity: pick.line.polymarket?.liquidity,
-      sourceMode: getMode(),
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      note: draft.note
-    },
-    ...blotter
-  ];
-  persistBlotter();
-  actionMessage =
-    status === "STAGED"
-      ? `Staged ${pick.line.selection}.`
-      : `Paper order routed for ${pick.line.selection}.`;
+  return {
+    id: crypto.randomUUID(),
+    source: "local",
+    traderId: preferences.traderId,
+    pickKey: getPickKey(pick),
+    eventId: pick.line.eventId,
+    selection: pick.line.selection,
+    side: draft.side,
+    platform: POLYMARKET_PLATFORM,
+    status: "STAGED",
+    stake: draft.stake,
+    priceLimit: draft.odds,
+    edge: pick.edge,
+    expectedValuePerDollar: pick.expectedValuePerDollar,
+    kellyFraction: pick.kellyFraction,
+    friction: pick.line.polymarket?.bidAskSpread,
+    liquidity: pick.line.polymarket?.liquidity,
+    sourceMode: preferences.mode,
+    executionMode: preferences.executionMode,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    note: draft.note
+  };
 }
 
-function updateTradeStatus(id: string, status: TradeStatus): void {
-  blotter = blotter.map((trade) =>
-    trade.id === id ? { ...trade, status, updatedAt: new Date().toISOString() } : trade
-  );
-  persistBlotter();
+function queueTradeLocal(pick: ScoredPick, draft: TicketDraft): void {
+  const preferences = readPreferences();
+  draftTrades = [toDraftTrade(pick, preferences, draft), ...draftTrades];
+  persistDraftTrades();
+  actionMessage = `Staged ${pick.line.selection}.`;
 }
 
-function clearClosedTrades(): void {
-  blotter = blotter.filter(
-    (trade) => trade.status !== "FILLED" && trade.status !== "CANCELLED"
-  );
-  persistBlotter();
-  actionMessage = "Removed filled and cancelled trades from the blotter.";
-  render();
+function discardDraftTrade(id: string): void {
+  draftTrades = draftTrades.filter((trade) => trade.id !== id);
+  persistDraftTrades();
+  actionMessage = "Removed staged ticket.";
 }
 
-function selectPickByKey(pickKey: string): void {
-  selectedPickKey = pickKey;
-  persistSelectedPickKey();
-  ticketSeedKey = null;
+function removeDraftsForPick(pickKey: string): void {
+  draftTrades = draftTrades.filter((trade) => trade.pickKey !== pickKey);
+  persistDraftTrades();
+}
+
+function mapServerTrade(raw: Record<string, unknown>): DashboardTrade {
+  const metadata = (raw.metadata ?? {}) as Record<string, unknown>;
+  const details = (raw.details ?? {}) as Record<string, unknown>;
+  return {
+    id: String(raw.id),
+    source: "server",
+    traderId: String(raw.userId ?? ""),
+    pickKey:
+      typeof metadata.candidatePickId === "string"
+        ? metadata.candidatePickId
+        : `${String(raw.marketId ?? "")}::${String(metadata.selection ?? raw.marketId ?? "")}`,
+    eventId: String(raw.marketId ?? ""),
+    selection: String(metadata.selection ?? raw.marketId ?? ""),
+    side: raw.side === "SELL" ? "SELL" : "BUY",
+    platform: String(raw.platform ?? POLYMARKET_PLATFORM),
+    status: normalizeTradeStatus(raw.status),
+    stake: coerceNumber(raw.stake, 0),
+    priceLimit: coerceNumber(raw.odds, 0),
+    edge: coerceNumber(metadata.modelEdge, 0),
+    expectedValuePerDollar: coerceNumber(metadata.expectedValuePerDollar, 0),
+    kellyFraction: coerceNumber(metadata.kellyFraction, 0),
+    friction:
+      optionalNumber(metadata.friction) ??
+      optionalNumber(details.friction) ??
+      optionalNumber(details.bidAskSpread),
+    liquidity: optionalNumber(metadata.liquidity) ?? optionalNumber(details.liquidity),
+    sourceMode:
+      metadata.sourceUrl && String(metadata.sourceUrl).startsWith("demo:")
+        ? "demo"
+        : "live",
+    executionMode:
+      metadata.orderMode === "live" || metadata.orderMode === "paper"
+        ? (metadata.orderMode as ExecutionMode)
+        : details.mode === "live"
+          ? "live"
+          : "paper",
+    createdAt: String(raw.placedAt ?? new Date().toISOString()),
+    updatedAt: String(raw.filledAt ?? raw.settledAt ?? raw.placedAt ?? new Date().toISOString()),
+    note: String(metadata.note ?? ""),
+    platformOrderId: raw.platformOrderId ? String(raw.platformOrderId) : undefined,
+    error: raw.error ? String(raw.error) : undefined
+  };
+}
+
+async function requestJson<T>(input: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(input, {
+    ...init,
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      ...init?.headers
+    }
+  });
+  const body = (await res.json()) as Record<string, unknown>;
+  if (!res.ok) {
+    const error =
+      (typeof body.error === "string" && body.error) ||
+      (typeof (body.result as Record<string, unknown> | undefined)?.error === "string" &&
+        String((body.result as Record<string, unknown>).error)) ||
+      res.statusText;
+    throw new Error(error);
+  }
+  return body as T;
+}
+
+async function refreshApiStatus(): Promise<void> {
+  try {
+    apiStatus = await requestJson<ApiStatusResponse>("/api/status");
+    apiError = null;
+  } catch (error) {
+    apiStatus = null;
+    apiError = error instanceof Error ? error.message : String(error);
+  }
+}
+
+async function refreshServerOrders(refresh = false): Promise<void> {
+  const traderId = encodeURIComponent(readPreferences().traderId);
+  try {
+    const data = await requestJson<{ orders: Record<string, unknown>[] }>(
+      `/api/orders?userId=${traderId}${refresh ? "&refresh=1" : ""}`,
+      {
+        method: "GET",
+        headers: { Accept: "application/json" }
+      }
+    );
+    serverTrades = (data.orders ?? []).map((order) => mapServerTrade(order));
+    apiError = null;
+  } catch (error) {
+    serverTrades = [];
+    apiError = error instanceof Error ? error.message : String(error);
+  }
+}
+
+async function syncBackend(refresh = false): Promise<void> {
+  await Promise.all([refreshApiStatus(), refreshServerOrders(refresh)]);
   render();
 }
 
@@ -553,6 +707,82 @@ function applySourceChange(): void {
   });
 }
 
+async function submitTrade(pick: ScoredPick, draft: TicketDraft): Promise<void> {
+  const preferences = readPreferences();
+  try {
+    const response = await requestJson<{
+      result: { success: boolean; error?: string };
+    }>("/api/orders", {
+      method: "POST",
+      body: JSON.stringify({
+        userId: preferences.traderId,
+        candidate: pick,
+        strategy: {
+          kellyScale: preferences.kellyScale,
+          minEdge: preferences.minEdge,
+          bankroll: preferences.bankroll,
+          sourceUrl:
+            preferences.mode === "live" ? preferences.liveUrl : "demo://polymarket-dashboard"
+        },
+        ticket: {
+          side: draft.side,
+          stake: draft.stake,
+          oddsLimit: draft.odds,
+          note: draft.note,
+          mode: preferences.executionMode
+        }
+      })
+    });
+    if (!response.result.success) {
+      throw new Error(response.result.error || "Order placement failed.");
+    }
+    removeDraftsForPick(getPickKey(pick));
+    actionMessage =
+      preferences.executionMode === "live"
+        ? `Live order routed for ${pick.line.selection}.`
+        : `Paper order stored for ${pick.line.selection}.`;
+    await refreshServerOrders(true);
+  } catch (error) {
+    actionMessage = error instanceof Error ? error.message : String(error);
+  }
+  render();
+}
+
+async function cancelServerTrade(orderId: string): Promise<void> {
+  try {
+    await requestJson(`/api/orders/${encodeURIComponent(orderId)}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+    actionMessage = "Order cancelled.";
+    await refreshServerOrders(true);
+  } catch (error) {
+    actionMessage = error instanceof Error ? error.message : String(error);
+  }
+  render();
+}
+
+async function refreshServerTrade(orderId: string): Promise<void> {
+  try {
+    await requestJson(`/api/orders/${encodeURIComponent(orderId)}/refresh`, {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+    actionMessage = "Order status refreshed.";
+    await refreshServerOrders(false);
+  } catch (error) {
+    actionMessage = error instanceof Error ? error.message : String(error);
+  }
+  render();
+}
+
+function selectPickByKey(pickKey: string): void {
+  selectedPickKey = pickKey;
+  persistSelectedPickKey();
+  ticketSeedKey = null;
+  render();
+}
+
 function renderFeedStatus(view: ViewModel): void {
   const el = $<HTMLElement>("feedStatus");
   const mode = view.preferences.mode;
@@ -581,6 +811,18 @@ function renderSummaryCards(view: ViewModel): void {
       .filter((value): value is number => value !== undefined)
   );
   const deployed = view.openTrades.reduce((sum, trade) => sum + trade.stake, 0);
+  const liveReady = apiStatus?.liveTradingEnabled ?? false;
+  const execLabel =
+    view.preferences.executionMode === "live"
+      ? liveReady
+        ? "Live armed"
+        : "Live blocked"
+      : "Paper";
+  const execDetail =
+    view.preferences.executionMode === "live"
+      ? apiStatus?.liveTradingReason ?? "Server ready for live orders."
+      : apiError ?? "Server-backed paper orders enabled.";
+
   $<HTMLElement>("summaryCards").innerHTML = `
     <article class="hero-card">
       <span>Actionable now</span>
@@ -598,9 +840,9 @@ function renderSummaryCards(view: ViewModel): void {
       <small>${fmtPct(view.preferences.bankroll > 0 ? view.plannedStake / view.preferences.bankroll : 0)}</small>
     </article>
     <article class="hero-card">
-      <span>Desk exposure</span>
-      <strong>${fmtMoney(deployed)}</strong>
-      <small>Avg edge ${fmtPct(avgEdge)}${avgFriction !== undefined ? ` · avg friction ${fmt(avgFriction, 3)}` : ""}</small>
+      <span>Execution</span>
+      <strong>${escapeHtml(execLabel)}</strong>
+      <small>${escapeHtml(execDetail || `Avg edge ${fmtPct(avgEdge)} · avg friction ${avgFriction !== undefined ? fmt(avgFriction, 3) : "—"}`)}</small>
     </article>
   `;
 }
@@ -746,12 +988,14 @@ function renderOpportunityBoard(view: ViewModel): void {
     return;
   }
   empty.classList.add("hidden");
+  const routeLabel = view.preferences.executionMode === "live" ? "Live" : "Paper";
   tbody.innerHTML = view.displayed
     .map((pick, index) => {
       const pickKey = getPickKey(pick);
       const selected = pickKey === selectedPickKey;
       const friction = pick.line.polymarket?.bidAskSpread;
       const liquidity = pick.line.polymarket?.liquidity;
+      const canLiveRoute = Boolean(pick.line.polymarket?.contract?.tokenId);
       return `
         <tr class="opportunity-row${selected ? " selected" : ""}" data-action="select-pick" data-pick-key="${escapeHtml(pickKey)}">
           <td><span class="rank-badge">#${index + 1}</span></td>
@@ -770,7 +1014,7 @@ function renderOpportunityBoard(view: ViewModel): void {
           <td>
             <div class="table-actions">
               <button type="button" class="table-btn" data-action="stage-pick" data-pick-key="${escapeHtml(pickKey)}">Stage</button>
-              <button type="button" class="table-btn" data-action="place-pick" data-pick-key="${escapeHtml(pickKey)}">Paper</button>
+              <button type="button" class="table-btn" data-action="route-pick" data-pick-key="${escapeHtml(pickKey)}" ${view.preferences.executionMode === "live" && !canLiveRoute ? "disabled" : ""}>${routeLabel}</button>
             </div>
           </td>
         </tr>
@@ -790,10 +1034,15 @@ function renderSelectedDetail(view: ViewModel): void {
   const pick = view.selected;
   const friction = pick.line.polymarket?.bidAskSpread;
   const liquidity = pick.line.polymarket?.liquidity;
+  const contract = pick.line.polymarket?.contract;
   const marketWidth = clamp(pick.impliedProbability * 100, 0, 100);
   const modelWidth = clamp(pick.model.coverProbability * 100, 0, 100);
-  const relatedTrades = blotter.filter((trade) => trade.pickKey === getPickKey(pick));
-  context.textContent = `${relatedTrades.length} ticket${relatedTrades.length === 1 ? "" : "s"} linked to this contract.`;
+  const relatedTrades = view.combinedTrades.filter((trade) => trade.pickKey === getPickKey(pick));
+  const routeInfo =
+    contract?.tokenId
+      ? `Token ${contract.tokenId}`
+      : "No live execution token metadata on this candidate.";
+  context.textContent = `${relatedTrades.length} ticket${relatedTrades.length === 1 ? "" : "s"} linked to this contract. ${routeInfo}`;
   detail.innerHTML = `
     <article class="detail-card">
       <div class="detail-head">
@@ -803,6 +1052,7 @@ function renderSelectedDetail(view: ViewModel): void {
           <span class="pill">${pick.line.market}</span>
           <span class="pill">${POLYMARKET_PLATFORM}</span>
           <span class="pill">${fmtMoney(suggestedStake(pick, view.preferences))} suggested</span>
+          ${contract?.slug ? `<span class="pill">${escapeHtml(contract.slug)}</span>` : ""}
         </div>
       </div>
       <div class="prob-card">
@@ -845,22 +1095,19 @@ function renderSelectedDetail(view: ViewModel): void {
           <strong>${liquidity !== undefined ? fmtCompactMoney(liquidity) : "—"}</strong>
         </div>
         <div class="metric-chip">
-          <span>Alpha / friction</span>
-          <strong>${pick.alphaPerFriction !== undefined ? fmt(pick.alphaPerFriction, 2) : "—"}</strong>
+          <span>Contract</span>
+          <strong>${contract?.tokenId ? escapeHtml(contract.tokenId) : "Feed only"}</strong>
         </div>
       </div>
     </article>
   `;
 }
 
-function statusClass(status: TradeStatus): string {
-  return status.toLowerCase();
-}
-
 function renderBlotter(view: ViewModel): void {
-  const staged = blotter.filter((trade) => trade.status === "STAGED").length;
-  const placed = blotter.filter((trade) => trade.status === "PLACED").length;
-  const filled = blotter.filter((trade) => trade.status === "FILLED").length;
+  const staged = view.stagedTrades.length;
+  const pending = view.serverTrades.filter((trade) => trade.status === BetStatus.PENDING).length;
+  const placed = view.serverTrades.filter((trade) => trade.status === BetStatus.PLACED || trade.status === BetStatus.FILLING).length;
+  const filled = view.serverTrades.filter((trade) => trade.status === BetStatus.FILLED).length;
   const deployed = view.openTrades.reduce((sum, trade) => sum + trade.stake, 0);
 
   $<HTMLElement>("blotterSummary").innerHTML = `
@@ -869,51 +1116,61 @@ function renderBlotter(view: ViewModel): void {
       <strong>${view.openTrades.length}</strong>
     </div>
     <div class="summary-chip">
-      <span>Staged</span>
+      <span>Staged local</span>
       <strong>${staged}</strong>
     </div>
     <div class="summary-chip">
-      <span>Paper live</span>
-      <strong>${placed}</strong>
+      <span>Pending</span>
+      <strong>${pending}</strong>
     </div>
     <div class="summary-chip">
-      <span>Filled</span>
-      <strong>${filled}</strong>
+      <span>Live / paper open</span>
+      <strong>${placed}</strong>
     </div>
     <div class="summary-chip">
       <span>Exposure</span>
       <strong>${fmtMoney(deployed)}</strong>
     </div>
+    <div class="summary-chip">
+      <span>Filled</span>
+      <strong>${filled}</strong>
+    </div>
   `;
 
   const rows = $<HTMLElement>("blotterRows");
-  if (blotter.length === 0) {
-    rows.innerHTML = `<div class="empty-card">No tickets yet. Stage a trade from the board or the selected contract panel.</div>`;
+  if (view.combinedTrades.length === 0) {
+    rows.innerHTML = `<div class="empty-card">No tickets yet. Stage a trade from the board or route an order through the server.</div>`;
     return;
   }
 
-  rows.innerHTML = blotter
+  rows.innerHTML = view.combinedTrades
     .map((trade) => {
-      const pickStillVisible = view.filtered.some((pick) => getPickKey(pick) === trade.pickKey);
+      const pickStillVisible = view.allScored.some((pick) => getPickKey(pick) === trade.pickKey);
       const actions: string[] = [];
-      if (trade.status === "STAGED") {
-        actions.push(`<button type="button" class="mini-btn" data-action="place-trade" data-trade-id="${trade.id}">Place</button>`);
-        actions.push(`<button type="button" class="mini-btn" data-action="cancel-trade" data-trade-id="${trade.id}">Cancel</button>`);
-      } else if (trade.status === "PLACED") {
-        actions.push(`<button type="button" class="mini-btn" data-action="fill-trade" data-trade-id="${trade.id}">Mark filled</button>`);
-        actions.push(`<button type="button" class="mini-btn" data-action="cancel-trade" data-trade-id="${trade.id}">Cancel</button>`);
+      if (trade.source === "local") {
+        actions.push(`<button type="button" class="mini-btn" data-action="route-draft" data-trade-id="${trade.id}">Route</button>`);
+        actions.push(`<button type="button" class="mini-btn" data-action="discard-draft" data-trade-id="${trade.id}">Discard</button>`);
+      } else if (trade.status === BetStatus.PENDING || trade.status === BetStatus.PLACED || trade.status === BetStatus.FILLING) {
+        actions.push(`<button type="button" class="mini-btn" data-action="refresh-order" data-trade-id="${trade.id}">Refresh</button>`);
+        actions.push(`<button type="button" class="mini-btn" data-action="cancel-order" data-trade-id="${trade.id}">Cancel</button>`);
       }
       if (pickStillVisible) {
         actions.push(`<button type="button" class="mini-btn" data-action="focus-trade" data-pick-key="${escapeHtml(trade.pickKey)}">Focus</button>`);
       }
+      const execBadge =
+        trade.source === "server"
+          ? trade.executionMode === "live"
+            ? "Live"
+            : "Paper"
+          : "Draft";
       return `
         <article class="blotter-card">
           <div class="blotter-title">
             <div>
               <strong>${escapeHtml(trade.selection)}</strong>
-              <p class="muted tiny">${escapeHtml(trade.traderId)} · ${relativeTime(trade.updatedAt) ?? "just now"}</p>
+              <p class="muted tiny">${escapeHtml(trade.traderId)} · ${relativeTime(trade.updatedAt) ?? "just now"} · ${execBadge}</p>
             </div>
-            <span class="status-pill ${statusClass(trade.status)}">${trade.status}</span>
+            <span class="status-pill ${trade.status.toLowerCase()}">${trade.status}</span>
           </div>
           <div class="blotter-meta">
             <span>${trade.side} ${fmtMoney(trade.stake)} @ ${trade.priceLimit.toFixed(2)}</span>
@@ -922,6 +1179,8 @@ function renderBlotter(view: ViewModel): void {
             <span>${trade.friction !== undefined ? `Friction ${fmt(trade.friction, 3)}` : "No friction data"}</span>
           </div>
           ${trade.note ? `<p class="muted tiny">${escapeHtml(trade.note)}</p>` : ""}
+          ${trade.error ? `<p class="negative tiny">${escapeHtml(trade.error)}</p>` : ""}
+          ${trade.platformOrderId ? `<p class="muted tiny mono">${escapeHtml(trade.platformOrderId)}</p>` : ""}
           <div class="blotter-actions">${actions.join("")}</div>
         </article>
       `;
@@ -929,8 +1188,26 @@ function renderBlotter(view: ViewModel): void {
     .join("");
 }
 
-function renderActionStatus(): void {
-  $<HTMLElement>("actionStatus").textContent = actionMessage;
+function renderActionStatus(view: ViewModel): void {
+  const selected = view.selected;
+  const sendButton = $<HTMLButtonElement>("sendTicket");
+  const wantsLive = view.preferences.executionMode === "live";
+  const canRouteLive = Boolean(selected?.line.polymarket?.contract?.tokenId) && (apiStatus?.liveTradingEnabled ?? false);
+  sendButton.textContent = wantsLive ? "Send live order" : "Send paper order";
+  sendButton.disabled = wantsLive && !canRouteLive;
+
+  if (wantsLive && !(apiStatus?.liveTradingEnabled ?? false)) {
+    $<HTMLElement>("actionStatus").textContent =
+      actionMessage || apiStatus?.liveTradingReason || apiError || "Live execution is not armed on the server.";
+    return;
+  }
+  if (wantsLive && selected && !selected.line.polymarket?.contract?.tokenId) {
+    $<HTMLElement>("actionStatus").textContent =
+      actionMessage || "This candidate has no Polymarket token ID, so it cannot be routed live.";
+    return;
+  }
+  $<HTMLElement>("actionStatus").textContent =
+    actionMessage || apiError || (apiStatus?.liveTradingReason ?? "");
 }
 
 function render(): void {
@@ -951,7 +1228,11 @@ function render(): void {
   renderOpportunityBoard(currentView);
   renderSelectedDetail(currentView);
   renderBlotter(currentView);
-  renderActionStatus();
+  renderActionStatus(currentView);
+}
+
+function findPickInView(pickKey: string): ScoredPick | undefined {
+  return currentView?.allScored.find((pick) => getPickKey(pick) === pickKey);
 }
 
 function handleSelectOrTradeAction(target: HTMLElement): void {
@@ -960,7 +1241,7 @@ function handleSelectOrTradeAction(target: HTMLElement): void {
   if (!pickKey || !currentView) {
     return;
   }
-  const pick = currentView.filtered.find((candidate) => getPickKey(candidate) === pickKey);
+  const pick = findPickInView(pickKey);
   if (!pick) {
     return;
   }
@@ -977,8 +1258,16 @@ function handleSelectOrTradeAction(target: HTMLElement): void {
   selectedPickKey = pickKey;
   persistSelectedPickKey();
   ticketSeedKey = null;
-  queueTrade(pick, action === "place-pick" ? "PLACED" : "STAGED", draft);
-  render();
+
+  if (action === "stage-pick") {
+    queueTradeLocal(pick, draft);
+    render();
+    return;
+  }
+
+  if (action === "route-pick") {
+    void submitTrade(pick, draft);
+  }
 }
 
 function handleBlotterAction(target: HTMLElement): void {
@@ -995,32 +1284,58 @@ function handleBlotterAction(target: HTMLElement): void {
     return;
   }
 
-  if (action === "place-trade") {
-    updateTradeStatus(tradeId, "PLACED");
-    actionMessage = "Ticket promoted to paper live.";
-  } else if (action === "fill-trade") {
-    updateTradeStatus(tradeId, "FILLED");
-    actionMessage = "Ticket marked filled.";
-  } else if (action === "cancel-trade") {
-    updateTradeStatus(tradeId, "CANCELLED");
-    actionMessage = "Ticket cancelled.";
+  if (action === "discard-draft") {
+    discardDraftTrade(tradeId);
+    render();
+    return;
   }
-  render();
+
+  const draftTrade = draftTrades.find((trade) => trade.id === tradeId);
+  if (action === "route-draft" && draftTrade) {
+    const pick = findPickInView(draftTrade.pickKey);
+    if (!pick) {
+      actionMessage = "Draft contract is not in the current board; refresh the feed before routing.";
+      render();
+      return;
+    }
+    void submitTrade(pick, {
+      side: draftTrade.side,
+      stake: draftTrade.stake,
+      odds: draftTrade.priceLimit,
+      note: draftTrade.note
+    });
+    return;
+  }
+
+  if (action === "refresh-order") {
+    void refreshServerTrade(tradeId);
+    return;
+  }
+
+  if (action === "cancel-order") {
+    void cancelServerTrade(tradeId);
+  }
 }
 
-function handleManualTicket(status: TradeStatus): void {
+function handleManualTicket(stageOnly: boolean): void {
   if (!currentView?.selected) {
     actionMessage = "Select a contract before creating a ticket.";
-    renderActionStatus();
+    render();
     return;
   }
   const draft = readTicketDraft();
   if (!draft) {
-    renderActionStatus();
+    render();
     return;
   }
-  queueTrade(currentView.selected, status, draft);
-  render();
+
+  if (stageOnly) {
+    queueTradeLocal(currentView.selected, draft);
+    render();
+    return;
+  }
+
+  void submitTrade(currentView.selected, draft);
 }
 
 for (const id of [
@@ -1033,13 +1348,18 @@ for (const id of [
   "minLiquidity",
   "maxPositions",
   "sortMode",
-  "traderId"
+  "executionMode"
 ] as const) {
   $(id).addEventListener("input", () => {
     actionMessage = "";
     render();
   });
 }
+
+$<HTMLInputElement>("traderId").addEventListener("change", () => {
+  actionMessage = "";
+  void syncBackend(false);
+});
 
 $<HTMLInputElement>("sourceDemo").addEventListener("change", applySourceChange);
 $<HTMLInputElement>("sourceLive").addEventListener("change", applySourceChange);
@@ -1058,12 +1378,14 @@ $<HTMLButtonElement>("refreshNow").addEventListener("click", () => {
   void refreshLive();
 });
 $<HTMLButtonElement>("stageTicket").addEventListener("click", () => {
-  handleManualTicket("STAGED");
+  handleManualTicket(true);
 });
 $<HTMLButtonElement>("sendTicket").addEventListener("click", () => {
-  handleManualTicket("PLACED");
+  handleManualTicket(false);
 });
-$<HTMLButtonElement>("clearBlotter").addEventListener("click", clearClosedTrades);
+$<HTMLButtonElement>("syncOrders").addEventListener("click", () => {
+  void syncBackend(true);
+});
 
 $<HTMLTableSectionElement>("rows").addEventListener("click", (event) => {
   const target = (event.target as HTMLElement).closest<HTMLElement>("[data-action]");
@@ -1094,6 +1416,8 @@ $<HTMLElement>("blotterRows").addEventListener("click", (event) => {
 });
 
 applyPreferences(loadPreferences());
+
+void syncBackend(false);
 
 if (getMode() === "live") {
   void refreshLive().then(() => startPoll());

@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "agent": "tsx scripts/polymarket-feed.ts",
     "build": "npm run check && vite build",
     "check": "tsc --noEmit",
     "dev": "vite",
@@ -17,5 +18,8 @@
     "typescript": "^5.9.3",
     "vite": "^6.4.1",
     "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "@polymarket/clob-client": "^5.8.1"
   }
 }

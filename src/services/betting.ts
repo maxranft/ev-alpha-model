@@ -17,6 +17,14 @@ export const getOrderStatus = async (orderId: string) => {
   return executionService.checkOrderStatus(orderId);
 };
 
+export const getOrder = async (orderId: string) => {
+  return executionService.getOrder(orderId);
+};
+
 export const getActiveOrders = async (userId: string) => {
   return executionService.getActiveOrders(userId);
+};
+
+export const listOrders = async (userId?: string, limit?: number) => {
+  return executionService.listOrders(userId, limit);
 };

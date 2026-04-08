@@ -2,6 +2,7 @@ export const POLYMARKET_PLATFORM = "polymarket";
 
 export type ExecutionPlatform = typeof POLYMARKET_PLATFORM;
 export type BetSide = "BUY" | "SELL";
+export type ExecutionMode = "paper" | "live";
 
 export enum BetStatus {
   PENDING = "PENDING",
@@ -37,6 +38,20 @@ export interface BetOrderMetadata {
   modelProbability: number;
   kellyFraction: number;
   riskScore: number;
+  expectedValuePerDollar?: number;
+  friction?: number;
+  liquidity?: number;
+  note?: string;
+  selection?: string;
+  sourceUrl?: string;
+  orderMode?: ExecutionMode;
+  tokenId?: string;
+  conditionId?: string;
+  marketSlug?: string;
+  outcome?: string;
+  outcomeIndex?: number;
+  tickSize?: string;
+  negRisk?: boolean;
 }
 
 export interface BetPlacementMetadata {
@@ -46,6 +61,12 @@ export interface BetPlacementMetadata {
   modelEdge?: number;
   modelProbability?: number;
   kellyFraction?: number;
+  expectedValuePerDollar?: number;
+  friction?: number;
+  liquidity?: number;
+  note?: string;
+  selection?: string;
+  sourceUrl?: string;
 }
 
 export interface BetOrder {
@@ -71,11 +92,19 @@ export interface BetOrder {
 
 export interface BetPlacement {
   platform?: ExecutionPlatform;
+  mode?: ExecutionMode;
   marketId: string;
   side: BetSide;
   stake: number;
   oddsLimit?: number;
   expiration?: Date;
+  tokenId?: string;
+  conditionId?: string;
+  marketSlug?: string;
+  outcome?: string;
+  outcomeIndex?: number;
+  tickSize?: string;
+  negRisk?: boolean;
   metadata?: BetPlacementMetadata;
 }
 
@@ -83,6 +112,7 @@ export interface BetExecutionResult {
   success: boolean;
   orderId?: string;
   platformOrderId?: string;
+  status?: BetStatus;
   error?: string;
   details?: Record<string, unknown>;
 }

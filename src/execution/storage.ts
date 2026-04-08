@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 
 import {
   ACTIVE_BET_STATUSES,
@@ -13,6 +15,7 @@ export interface OrderStore {
   updateOrder(orderId: string, update: OrderUpdate): Promise<BetOrder | null>;
   getOrder(orderId: string): Promise<BetOrder | null>;
   getActiveOrders(userId: string): Promise<BetOrder[]>;
+  listOrders(userId?: string, limit?: number): Promise<BetOrder[]>;
   clear(): Promise<void>;
 }
 
@@ -35,8 +38,28 @@ function cloneOrder(order: BetOrder): BetOrder {
   };
 }
 
+function serializeOrder(order: BetOrder): Record<string, unknown> {
+  return {
+    ...order,
+    placedAt: order.placedAt.toISOString(),
+    expiresAt: order.expiresAt?.toISOString(),
+    filledAt: order.filledAt?.toISOString(),
+    settledAt: order.settledAt?.toISOString()
+  };
+}
+
+function deserializeOrder(raw: Record<string, unknown>): BetOrder {
+  return {
+    ...(raw as Omit<BetOrder, "placedAt" | "expiresAt" | "filledAt" | "settledAt">),
+    placedAt: new Date(String(raw.placedAt)),
+    expiresAt: raw.expiresAt ? new Date(String(raw.expiresAt)) : undefined,
+    filledAt: raw.filledAt ? new Date(String(raw.filledAt)) : undefined,
+    settledAt: raw.settledAt ? new Date(String(raw.settledAt)) : undefined
+  };
+}
+
 export class InMemoryOrderStore implements OrderStore {
-  private readonly orders = new Map<string, BetOrder>();
+  protected readonly orders = new Map<string, BetOrder>();
 
   async createOrder(order: Omit<BetOrder, "id">): Promise<BetOrder> {
     const created: BetOrder = {
@@ -84,17 +107,94 @@ export class InMemoryOrderStore implements OrderStore {
   }
 
   async getActiveOrders(userId: string): Promise<BetOrder[]> {
-    return [...this.orders.values()]
-      .filter(
-        (order) =>
-          order.userId === userId && activeOrderStatusSet.has(order.status)
-      )
+    return (await this.listOrders(userId)).filter((order) =>
+      activeOrderStatusSet.has(order.status)
+    );
+  }
+
+  async listOrders(userId?: string, limit?: number): Promise<BetOrder[]> {
+    const listed = [...this.orders.values()]
+      .filter((order) => (userId ? order.userId === userId : true))
       .sort((left, right) => right.placedAt.getTime() - left.placedAt.getTime())
       .map(cloneOrder);
+    return limit !== undefined ? listed.slice(0, limit) : listed;
   }
 
   async clear(): Promise<void> {
     this.orders.clear();
+  }
+}
+
+export class FileOrderStore extends InMemoryOrderStore {
+  private readonly ready: Promise<void>;
+
+  constructor(private readonly filePath: string = path.resolve(process.cwd(), "data/orders.json")) {
+    super();
+    this.ready = this.loadFromDisk();
+  }
+
+  async createOrder(order: Omit<BetOrder, "id">): Promise<BetOrder> {
+    await this.ready;
+    const created = await super.createOrder(order);
+    await this.persist();
+    return created;
+  }
+
+  async updateOrder(orderId: string, update: OrderUpdate): Promise<BetOrder | null> {
+    await this.ready;
+    const updated = await super.updateOrder(orderId, update);
+    await this.persist();
+    return updated;
+  }
+
+  async getOrder(orderId: string): Promise<BetOrder | null> {
+    await this.ready;
+    return super.getOrder(orderId);
+  }
+
+  async getActiveOrders(userId: string): Promise<BetOrder[]> {
+    await this.ready;
+    return super.getActiveOrders(userId);
+  }
+
+  async listOrders(userId?: string, limit?: number): Promise<BetOrder[]> {
+    await this.ready;
+    return super.listOrders(userId, limit);
+  }
+
+  async clear(): Promise<void> {
+    await this.ready;
+    await super.clear();
+    await this.persist();
+  }
+
+  private async loadFromDisk(): Promise<void> {
+    try {
+      const raw = await readFile(this.filePath, "utf8");
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) {
+        return;
+      }
+      for (const entry of parsed) {
+        if (!entry || typeof entry !== "object") {
+          continue;
+        }
+        const order = deserializeOrder(entry as Record<string, unknown>);
+        this.orders.set(order.id, cloneOrder(order));
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+    }
+  }
+
+  private async persist(): Promise<void> {
+    await mkdir(path.dirname(this.filePath), { recursive: true });
+    const serialized = [...this.orders.values()]
+      .sort((left, right) => right.placedAt.getTime() - left.placedAt.getTime())
+      .map((order) => serializeOrder(order));
+    await writeFile(this.filePath, JSON.stringify(serialized, null, 2), "utf8");
   }
 }
 

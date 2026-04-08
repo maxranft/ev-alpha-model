@@ -19,6 +19,10 @@ export default defineConfig({
   server: {
     host: "127.0.0.1",
     port: 5173,
+    proxy: {
+      "/api": "http://127.0.0.1:3001",
+      "/feed": "http://127.0.0.1:3001"
+    },
     fs: {
       // Custom allow replaces Vite defaults; include repo root + web + model src.
       allow: [

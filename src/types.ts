@@ -1,5 +1,17 @@
 export type OddsFormat = "american" | "decimal";
 
+export interface PolymarketContractMeta {
+  marketId: string;
+  conditionId?: string;
+  slug?: string;
+  tokenId?: string;
+  outcome?: string;
+  outcomeIndex?: number;
+  minTickSize?: number;
+  negRisk?: boolean;
+  acceptingOrders?: boolean;
+}
+
 /** Polymarket / CLOB-style venue metadata (optional). */
 export interface PolymarketLineMeta {
   /** Best-ask minus best-bid width in probability space (0–1). Smaller = tighter book. */
@@ -7,6 +19,7 @@ export interface PolymarketLineMeta {
   liquidity?: number;
   bestBid?: number;
   bestAsk?: number;
+  contract?: PolymarketContractMeta;
 }
 
 export interface MarketLine {

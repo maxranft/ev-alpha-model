@@ -71,7 +71,21 @@ export class OrderManager {
         modelEdge: normalizedPlacement.metadata?.modelEdge || 0,
         modelProbability: normalizedPlacement.metadata?.modelProbability || 0,
         kellyFraction: normalizedPlacement.metadata?.kellyFraction || 0,
-        riskScore: riskCheck.score
+        riskScore: riskCheck.score,
+        expectedValuePerDollar: normalizedPlacement.metadata?.expectedValuePerDollar,
+        friction: normalizedPlacement.metadata?.friction,
+        liquidity: normalizedPlacement.metadata?.liquidity,
+        note: normalizedPlacement.metadata?.note,
+        selection: normalizedPlacement.metadata?.selection,
+        sourceUrl: normalizedPlacement.metadata?.sourceUrl,
+        orderMode: normalizedPlacement.mode ?? "paper",
+        tokenId: normalizedPlacement.tokenId,
+        conditionId: normalizedPlacement.conditionId,
+        marketSlug: normalizedPlacement.marketSlug,
+        outcome: normalizedPlacement.outcome,
+        outcomeIndex: normalizedPlacement.outcomeIndex,
+        tickSize: normalizedPlacement.tickSize,
+        negRisk: normalizedPlacement.negRisk
       }
     };
 
@@ -92,6 +106,7 @@ export class OrderManager {
           success: true,
           orderId: updatedOrder?.id || order.id,
           platformOrderId: executionResult.platformOrderId,
+          status: updatedOrder?.status ?? BetStatus.PLACED,
           details: executionResult.details
         };
       }
@@ -105,6 +120,7 @@ export class OrderManager {
       return {
         success: false,
         orderId: order.id,
+        status: BetStatus.CANCELLED,
         error: executionResult.error || "Order placement failed"
       };
     } catch (error) {
@@ -117,6 +133,7 @@ export class OrderManager {
       return {
         success: false,
         orderId: order.id,
+        status: BetStatus.CANCELLED,
         error: message
       };
     }
@@ -144,7 +161,7 @@ export class OrderManager {
           status: BetStatus.CANCELLED,
           error: undefined
         });
-        return { success: true, orderId };
+        return { success: true, orderId, status: BetStatus.CANCELLED };
       }
 
       return {
@@ -162,12 +179,13 @@ export class OrderManager {
           error: undefined,
           details: result.details
         });
-        return { success: true, orderId };
+        return { success: true, orderId, status: BetStatus.CANCELLED, details: result.details };
       }
 
       return {
         success: false,
         orderId,
+        status: order.status,
         error: result.error || "Failed to cancel order"
       };
     } catch (error) {
@@ -176,9 +194,18 @@ export class OrderManager {
       return {
         success: false,
         orderId,
+        status: order.status,
         error: message
       };
     }
+  }
+
+  async getOrder(orderId: string): Promise<BetOrder | null> {
+    return this.orderStore.getOrder(orderId);
+  }
+
+  async listOrders(userId?: string, limit?: number): Promise<BetOrder[]> {
+    return this.orderStore.listOrders(userId, limit);
   }
 
   async checkOrderStatus(orderId: string): Promise<BetOrder | null> {

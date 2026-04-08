@@ -5,21 +5,28 @@ import type { LiveFeedEnvelope } from "../live-feed.js";
 export interface GammaMarket {
   id: string;
   question: string;
+  conditionId?: string;
   slug?: string;
   active?: boolean;
   closed?: boolean;
   outcomes?: string;
   outcomePrices?: string;
+  clobTokenIds?: string;
+  orderPriceMinTickSize?: number | string;
+  acceptingOrders?: boolean;
+  negRisk?: boolean;
   bestBid?: number | string;
   bestAsk?: number | string;
   spread?: number | string;
   liquidityNum?: number | string;
+  events?: GammaEvent[];
 }
 
 export interface GammaEvent {
   id: string;
   slug?: string;
   title?: string;
+  negRisk?: boolean;
   markets?: GammaMarket[];
 }
 
@@ -54,7 +61,15 @@ function polymarketMetaFromMarket(m: GammaMarket): MarketLine["polymarket"] | un
     bidAskSpread,
     liquidity,
     bestBid,
-    bestAsk
+    bestAsk,
+    contract: {
+      marketId: m.id,
+      conditionId: m.conditionId,
+      slug: m.slug,
+      minTickSize: toNum(m.orderPriceMinTickSize),
+      negRisk: m.negRisk ?? m.events?.some((event) => event.negRisk === true) ?? false,
+      acceptingOrders: m.acceptingOrders
+    }
   };
 }
 
@@ -75,6 +90,10 @@ function parseOutcomePrices(raw: string | undefined): number[] {
   return parts.map((p) => Number.parseFloat(p)).filter((n) => Number.isFinite(n));
 }
 
+function parseTokenIds(raw: string | undefined): string[] {
+  return parseJsonStringArray(raw);
+}
+
 /**
  * Map one Polymarket market to {@link CandidatePick} rows (one per outcome).
  * Uses outcome price as implied probability and sets `model.coverProbability` to the same value
@@ -86,6 +105,7 @@ export function gammaMarketToCandidates(m: GammaMarket): CandidatePick[] {
   }
   const labels = parseJsonStringArray(m.outcomes);
   const prices = parseOutcomePrices(m.outcomePrices);
+  const tokenIds = parseTokenIds(m.clobTokenIds);
   if (labels.length === 0 || labels.length !== prices.length) {
     return [];
   }
@@ -99,13 +119,26 @@ export function gammaMarketToCandidates(m: GammaMarket): CandidatePick[] {
     const decimalOdds = 1 / p;
     picks.push({
       line: {
-        eventId: `pm-${m.id}-${i}`,
+        eventId: `pm-${m.conditionId ?? m.id}-${tokenIds[i] ?? i}`,
         market: "moneyline",
         selection: `${m.question} — ${labels[i]}`,
         sportsbook: "Polymarket",
         oddsFormat: "decimal",
         odds: decimalOdds,
-        polymarket: pm
+        polymarket: {
+          ...pm,
+          contract: {
+            marketId: m.id,
+            conditionId: m.conditionId,
+            slug: m.slug,
+            tokenId: tokenIds[i],
+            outcome: labels[i],
+            outcomeIndex: i,
+            minTickSize: pm?.contract?.minTickSize,
+            negRisk: pm?.contract?.negRisk,
+            acceptingOrders: pm?.contract?.acceptingOrders
+          }
+        }
       },
       model: {
         coverProbability: p
@@ -130,12 +163,12 @@ export interface FetchGammaOptions {
   offset?: number;
 }
 
-export async function fetchGammaEvents(
+export async function fetchGammaMarkets(
   options: FetchGammaOptions = {}
-): Promise<GammaEvent[]> {
+): Promise<GammaMarket[]> {
   const limit = options.limit ?? 50;
   const offset = options.offset ?? 0;
-  const url = new URL(`${GAMMA_BASE}/events`);
+  const url = new URL(`${GAMMA_BASE}/markets`);
   url.searchParams.set("active", "true");
   url.searchParams.set("closed", "false");
   url.searchParams.set("limit", String(limit));
@@ -149,17 +182,17 @@ export async function fetchGammaEvents(
   }
   const body: unknown = await res.json();
   if (!Array.isArray(body)) {
-    throw new Error("Gamma API: expected array of events.");
+    throw new Error("Gamma API: expected array of markets.");
   }
-  return body as GammaEvent[];
+  return body as GammaMarket[];
 }
 
 export async function buildPolymarketLiveFeed(
   options: FetchGammaOptions = {}
 ): Promise<LiveFeedEnvelope> {
-  const events = await fetchGammaEvents(options);
+  const markets = await fetchGammaMarkets(options);
   return {
     asOf: new Date().toISOString(),
-    candidates: gammaEventsToCandidates(events)
+    candidates: markets.flatMap((market) => gammaMarketToCandidates(market))
   };
 }

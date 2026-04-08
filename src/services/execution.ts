@@ -24,8 +24,16 @@ export class ExecutionService {
     return this.orderManager.checkOrderStatus(orderId);
   }
 
+  async getOrder(orderId: string): Promise<BetOrder | null> {
+    return this.orderManager.getOrder(orderId);
+  }
+
   async getActiveOrders(userId: string): Promise<BetOrder[]> {
     return this.orderManager.getActiveOrders(userId);
+  }
+
+  async listOrders(userId?: string, limit?: number): Promise<BetOrder[]> {
+    return this.orderManager.listOrders(userId, limit);
   }
 }
 

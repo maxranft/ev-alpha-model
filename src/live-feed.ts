@@ -26,6 +26,39 @@ function isPolymarketMeta(raw: unknown): boolean {
       return false;
     }
   }
+  if (o.contract !== undefined) {
+    if (!o.contract || typeof o.contract !== "object") {
+      return false;
+    }
+    const contract = o.contract as Record<string, unknown>;
+    if (typeof contract.marketId !== "string") {
+      return false;
+    }
+    for (const key of ["conditionId", "slug", "tokenId", "outcome"] as const) {
+      if (contract[key] !== undefined && typeof contract[key] !== "string") {
+        return false;
+      }
+    }
+    if (
+      contract.outcomeIndex !== undefined &&
+      (!Number.isInteger(contract.outcomeIndex) || Number(contract.outcomeIndex) < 0)
+    ) {
+      return false;
+    }
+    for (const key of ["minTickSize"] as const) {
+      if (
+        contract[key] !== undefined &&
+        (typeof contract[key] !== "number" || !Number.isFinite(contract[key]))
+      ) {
+        return false;
+      }
+    }
+    for (const key of ["negRisk", "acceptingOrders"] as const) {
+      if (contract[key] !== undefined && typeof contract[key] !== "boolean") {
+        return false;
+      }
+    }
+  }
   return true;
 }
 
